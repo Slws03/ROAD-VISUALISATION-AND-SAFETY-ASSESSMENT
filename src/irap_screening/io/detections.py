@@ -15,7 +15,11 @@ from irap_screening.io.schema import DetectionRecord
 
 
 def load_detections(path: Path) -> dict[str, DetectionRecord]:
-    """Read one JSONL detection file, keyed by frame id."""
+    """Read one JSONL detection file, keyed by frame id.
+
+    A duplicate frame_id within one file overwrites the earlier record; a runner
+    writing one record per frame per detector type should never produce one.
+    """
     path = Path(path)
     if not path.exists():
         return {}

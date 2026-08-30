@@ -11,7 +11,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 Latitude = Annotated[float, Field(ge=-90.0, le=90.0)]
 Longitude = Annotated[float, Field(ge=-180.0, le=180.0)]
@@ -86,6 +86,25 @@ class DetectionRecord(BaseModel):
     type: Literal["lane", "sign", "pothole"]
     transform: Transform
     instances: list[LaneInstance | BoxInstance]
+
+    @model_validator(mode="after")
+    def _instances_match_type(self) -> DetectionRecord:
+        """Reject instances that do not match the record's declared type.
+
+        The union is not discriminated, so pydantic would otherwise accept a
+        record declaring "lane" whose instances carry bbox. That parses cleanly,
+        yields zero lanes at the isinstance filter downstream, and a frame with
+        no lane detected grades as the worst contrast band -- turning a
+        malformed file into a confident critical verdict.
+        """
+        expected = LaneInstance if self.type == "lane" else BoxInstance
+        for instance in self.instances:
+            if not isinstance(instance, expected):
+                raise ValueError(
+                    f"record type {self.type!r} requires {expected.__name__}, "
+                    f"got {type(instance).__name__} for instance {instance.id!r}"
+                )
+        return self
 
 
 class Segment(BaseModel):

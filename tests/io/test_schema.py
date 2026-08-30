@@ -104,3 +104,41 @@ def test_module_result_defaults_evidence_to_empty():
     )
     assert result.evidence == []
     assert result.notes is None
+
+
+def test_lane_record_rejects_box_instances():
+    """A mislabelled runner output must fail at the boundary, not downstream.
+
+    Without this check the box instance parses cleanly, the lane module's
+    isinstance filter yields nothing, and a frame with no lane detected grades
+    as the worst contrast band -- a confident wrong answer instead of an error.
+    """
+    with pytest.raises(ValidationError):
+        DetectionRecord(
+            frame_id="f_000004",
+            image_path="frames/f_000004.jpg",
+            sha256="d6e5f4a3b2c1d0e9",
+            type="lane",
+            transform=Transform(
+                source_wh=(1920, 1080), crop_top=0.0, crop_bottom=0.0, model_wh=(800, 320)
+            ),
+            instances=[
+                BoxInstance(id="f_000004#lane#0", bbox=(1.0, 2.0, 3.0, 4.0), conf=0.9)
+            ],
+        )
+
+
+def test_sign_record_rejects_lane_instances():
+    with pytest.raises(ValidationError):
+        DetectionRecord(
+            frame_id="f_000005",
+            image_path="frames/f_000005.jpg",
+            sha256="e7f6a5b4c3d2e1f0",
+            type="sign",
+            transform=Transform(
+                source_wh=(1920, 1080), crop_top=0.0, crop_bottom=0.0, model_wh=(640, 640)
+            ),
+            instances=[
+                LaneInstance(id="f_000005#sign#0", points=[(1.0, 2.0)], conf=0.9)
+            ],
+        )
