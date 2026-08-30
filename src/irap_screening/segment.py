@@ -44,11 +44,12 @@ def build_segments(
             if inside
         ]
 
-        imu_indices = np.flatnonzero(
-            (route.imu_dist_m >= start_m) & (route.imu_dist_m < end_m)
-        )
-        imu_start = int(imu_indices[0]) if imu_indices.size else 0
-        imu_end = int(imu_indices[-1]) + 1 if imu_indices.size else 0
+        # searchsorted rather than a boolean mask: it yields a monotonically
+        # non-decreasing range even for a segment containing no IMU samples,
+        # where a mask-based fallback would reset the range to (0, 0) and break
+        # the ordering that consumers rely on. Real logs do drop samples.
+        imu_start = int(np.searchsorted(route.imu_dist_m, start_m, side="left"))
+        imu_end = int(np.searchsorted(route.imu_dist_m, end_m, side="left"))
 
         segments.append(
             Segment(

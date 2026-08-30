@@ -1,5 +1,6 @@
 """Segments are the shared coordinate system; every module keys results by them."""
 
+import numpy as np
 import pytest
 
 from irap_screening.config import load_config
@@ -65,3 +66,30 @@ def test_custom_segment_length_is_honoured():
     cfg = load_config(overrides=["segment.length_m=250"])
     segments = build_segments(route, cfg)
     assert len(segments) == 2
+
+
+def test_segment_without_imu_samples_keeps_ranges_monotonic():
+    """An IMU dropout must not reset a mid-route segment's range to zero.
+
+    Real logs drop samples. A gap segment reporting (0, 0) would sit below the
+    previous segment's imu_end, breaking the ordering the test above asserts.
+    """
+    frames, gps, imu = straight_route(length_m=500.0)
+    route = align_route(frames, gps, imu)
+
+    # Drop every IMU sample falling inside the third segment (200-300 m).
+    kept = [
+        (sample, distance)
+        for sample, distance in zip(route.imu, route.imu_dist_m, strict=False)
+        if not (200.0 <= distance < 300.0)
+    ]
+    route.imu = [sample for sample, _ in kept]
+    route.imu_dist_m = np.array([distance for _, distance in kept])
+    route.imu_speed_mps = np.full(len(route.imu), 16.7)
+
+    segments = build_segments(route, load_config())
+
+    gap = segments[2]
+    assert gap.imu_start == gap.imu_end, "the gap segment must yield an empty range"
+    for earlier, later in zip(segments, segments[1:], strict=False):
+        assert earlier.imu_end <= later.imu_start
