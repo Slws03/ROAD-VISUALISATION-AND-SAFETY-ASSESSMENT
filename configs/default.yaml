@@ -21,7 +21,8 @@ sampling:
 curvature:
   threshold_m: 400               # iRAP Curvature Risk Factor boundary (provisional)
   v_min_mps: 5.0                 # below this, curvature is not_assessed
-  gyro_bias_window_s: 2.0        # stationary window used for bias estimation
+  stationary_speed_mps: 0.5      # vehicle stopped; distinct from v_min_mps, which
+                                 # is the floor for curvature being assessable at all
   stationary_accel_var: 0.05     # variance ceiling that counts as stationary
 
 grade:

@@ -125,3 +125,15 @@ def test_segment_aggregation_takes_the_worst_radius():
     results, _ = _analyse(*curved_route(radius_m=312.5, arc_length_m=300.0))
     for result in results:
         assert result.metrics["radius_m"] <= 400.0
+
+
+def test_slow_driving_is_not_mistaken_for_stationary():
+    """A vehicle crawling through a curve still has a genuine yaw rate.
+
+    Gating the bias estimate on v_min_mps would absorb that yaw rate into the
+    bias, and since bias is estimated once per route and applied to every
+    segment, a single junction turn would make straight road read as a hairpin.
+    """
+    frames, gps, imu = curved_route(radius_m=20.0, speed_mps=3.0, arc_length_m=60.0)
+    route = align_route(frames, gps, imu)
+    assert estimate_gyro_bias(route, load_config()) == pytest.approx(0.0, abs=1e-9)

@@ -28,9 +28,9 @@ _HUGE_RADIUS_M = 1.0e6
 def estimate_gyro_bias(route: AlignedRoute, cfg: Settings) -> float:
     """Mean yaw rate over stationary samples, used as the zero reference.
 
-    A sample counts as stationary when interpolated speed is below the minimum
-    and local accelerometer variance is small. When no stationary window exists,
-    the bias is reported as zero and the caller proceeds uncorrected.
+    A sample counts as stationary when interpolated speed is below the stationary
+    threshold and local accelerometer variance is small. When no stationary window
+    exists, the bias is reported as zero and the caller proceeds uncorrected.
     """
     if not route.imu:
         return 0.0
@@ -40,14 +40,18 @@ def estimate_gyro_bias(route: AlignedRoute, cfg: Settings) -> float:
         [[sample.ax, sample.ay, sample.az] for sample in route.imu], dtype=float
     )
 
-    slow = route.imu_speed_mps < cfg.curvature.v_min_mps
-    if not np.any(slow):
+    # Stationary, not merely slow. v_min_mps is the floor for curvature being
+    # assessable; a vehicle below it is still moving and still turning. Folding a
+    # crawling turn into the bias would corrupt every segment on the route, since
+    # the bias is estimated once and applied everywhere.
+    stationary = route.imu_speed_mps < cfg.curvature.stationary_speed_mps
+    if not np.any(stationary):
         return 0.0
 
-    variance = accel[slow].var(axis=0).max()
+    variance = accel[stationary].var(axis=0).max()
     if variance > cfg.curvature.stationary_accel_var:
         return 0.0
-    return float(gz[slow].mean())
+    return float(gz[stationary].mean())
 
 
 def analyse_curvature(

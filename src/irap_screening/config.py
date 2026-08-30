@@ -46,7 +46,7 @@ class SamplingSettings(_Section):
 class CurvatureSettings(_Section):
     threshold_m: PositiveFloat = 400.0
     v_min_mps: PositiveFloat = 5.0
-    gyro_bias_window_s: PositiveFloat = 2.0
+    stationary_speed_mps: PositiveFloat = 0.5
     stationary_accel_var: PositiveFloat = 0.05
 
 
