@@ -1,0 +1,25 @@
+# Design/spec documents — kept local, not tracked
+docs/superpowers/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Data & model artifacts
+dataset/
+data/
+runs/
+*.pt
+*.pth
+
+# Notebook outputs (nbstripout is the primary guard)
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
