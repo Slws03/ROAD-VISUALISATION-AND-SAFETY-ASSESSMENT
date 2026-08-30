@@ -25,7 +25,13 @@ def _accel_pitch(ax: np.ndarray, ay: np.ndarray, az: np.ndarray) -> np.ndarray:
 
 
 def pitch_series(route: AlignedRoute, cfg: Settings) -> np.ndarray:
-    """Complementary-filtered pitch in radians, one value per IMU sample."""
+    """Complementary-filtered pitch in radians, one value per IMU sample.
+
+    Note: alpha is applied as a fixed per-step weight, so the filter's effective
+    time constant scales with the IMU sample interval. This is correct for the
+    regular sampling this pipeline assumes; under irregular sampling alpha would
+    need deriving per step from a time constant and the actual dt.
+    """
     if not route.imu:
         return np.zeros(0)
 
