@@ -34,7 +34,10 @@ def straight_route(
     lat0, lon0 = 1.55, 110.35
 
     gps: list[GpsFix] = []
-    n_gps = int(duration_s * gps_hz) + 1
+    # ceil, not truncation: a 500 m route at 16.7 m/s lasts 29.94 s, and
+    # truncating to 29 fixes covers only 484 m -- the factory would not deliver
+    # the length it was asked for, and segment-count assertions would be off by one.
+    n_gps = math.ceil(duration_s * gps_hz) + 1
     for i in range(n_gps):
         t = i / gps_hz
         lat, lon = _offset_latlon(lat0, lon0, north_m=speed_mps * t, east_m=0.0)
@@ -112,7 +115,7 @@ def curved_route(
         )
 
     offset = stationary_prefix_s
-    n_gps = int(duration_s) + 1
+    n_gps = math.ceil(duration_s) + 1
     for i in range(n_gps):
         t = float(i)
         theta = omega * t
@@ -163,7 +166,7 @@ def graded_route(
     lat0, lon0 = 1.55, 110.35
 
     gps: list[GpsFix] = []
-    for i in range(int(duration_s) + 1):
+    for i in range(math.ceil(duration_s) + 1):
         t = float(i)
         lat, lon = _offset_latlon(lat0, lon0, north_m=speed_mps * t, east_m=0.0)
         gps.append(
