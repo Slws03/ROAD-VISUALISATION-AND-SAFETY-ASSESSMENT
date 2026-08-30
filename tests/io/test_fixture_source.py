@@ -64,3 +64,14 @@ def test_timestamps_are_timezone_aware(tmp_path: Path):
     _write_route(tmp_path)
     source = FixtureSource(tmp_path)
     assert source.frames()[0].timestamp_utc.tzinfo is not None
+
+
+def test_empty_speed_value_yields_none(tmp_path: Path):
+    """An empty cell must not be read as 0.0 — that would look like a stopped vehicle."""
+    _write_route(tmp_path)
+    (tmp_path / "gps.csv").write_text(
+        "timestamp_utc,lat,lon,speed_mps\n"
+        "2026-08-31T00:00:00Z,1.5500000,110.3500000,\n",
+        encoding="utf-8",
+    )
+    assert FixtureSource(tmp_path).gps()[0].speed_mps is None

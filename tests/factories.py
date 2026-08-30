@@ -111,7 +111,7 @@ def curved_route(
             )
         )
 
-    offset = float(n_prefix_gps)
+    offset = stationary_prefix_s
     n_gps = int(duration_s) + 1
     for i in range(n_gps):
         t = float(i)
