@@ -10,11 +10,15 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pytest
 from pydantic import ValidationError
 
+from irap_screening.config import load_config
 from irap_screening.io.detections import load_detections
 from irap_screening.io.schema import Frame, LaneInstance
+from irap_screening.modules.lane import weber_contrast_at
+from irap_screening.modules.marking import scan_near_lane_point
 from irap_screening.runners.lane import (
     RawFrame,
     RawLane,
@@ -79,12 +83,70 @@ def test_normalised_extremes_map_to_the_crop_boundaries():
     assert points[2] == pytest.approx((960.0, 567.0))
 
 
-def test_points_stay_inside_the_original_image():
-    """A sanity net for the whole route: nothing may land outside the frame."""
+def test_y_stays_within_the_crop_for_the_full_normalised_range():
+    """Every y CLRerNet can emit lands inside the crop, never elsewhere in the frame."""
     ys = [0.25 + 0.05 * step for step in range(16)]
     points = to_original_points([(0.5, y) for y in ys], SOURCE_WH, _meta())
 
     assert all(270.0 <= y <= 864.0 for _, y in points)
+
+
+def test_off_frame_x_is_passed_through_unclamped():
+    """CLRerNet extends curved lanes past the image edge; those points are kept.
+
+    Clamping would invent a position on the frame border and feed it to the
+    contrast sampler as if a marking were there. Both consumers --
+    lane.weber_contrast_at and marking.scan_near_lane_point -- bounds-check and
+    return None, so an out-of-frame point is dropped rather than measured. The
+    exporter's job is to report where the detector put the point.
+    """
+    points = to_original_points([(-0.1, 0.9), (1.2, 0.9)], SOURCE_WH, _meta())
+
+    assert points[0][0] == pytest.approx(-192.0)
+    assert points[1][0] == pytest.approx(2304.0)
+
+
+def test_off_frame_points_are_dropped_by_the_consumers_not_measured():
+    """Pins the assumption the previous test relies on, in the consumers themselves."""
+    gray = np.full((1080, 1920), 100, dtype=np.uint8)
+    cfg = load_config()
+
+    assert weber_contrast_at(gray, -192.0, 500.0, cfg.lane.bg_window) is None
+    assert weber_contrast_at(gray, 2304.0, 500.0, cfg.lane.bg_window) is None
+    assert scan_near_lane_point(gray, -192.0, 500.0, cfg) is None
+    assert scan_near_lane_point(gray, 2304.0, 500.0, cfg) is None
+
+
+def test_dump_above_the_config_threshold_is_rejected(tmp_path):
+    """A dump floor above lane.clrernet_conf makes the config knob inert.
+
+    Sweeping clrernet_conf below the dump's floor would then report no change
+    while in fact changing nothing -- the same inversion as sign.runner_conf.
+    """
+    route = tmp_path / "route"
+    _write_route(route, ["a.png"])
+    _write_dump(tmp_path / "raw.json", ["a.png"])
+    raw = json.loads((tmp_path / "raw.json").read_text(encoding="utf-8"))
+    raw["meta"]["conf_threshold"] = 0.6
+    (tmp_path / "raw.json").write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError) as excinfo:
+        export(tmp_path / "raw.json", route, load_config())
+
+    assert "could never bind" in str(excinfo.value)
+
+
+def test_model_wh_comes_from_the_dump_not_a_hardcoded_constant():
+    """The notebook's cv2.resize is an editable literal; Transform must track it."""
+    raw = RawFrame(
+        filename="a.png",
+        source_wh=SOURCE_WH,
+        lanes=[RawLane(conf=0.75, points_norm=[(0.3, 0.5)])],
+    )
+
+    record = build_record(_frame(0, "a.png"), raw, _meta(model_wh=(1640, 590)))
+
+    assert record.transform.model_wh == (1640, 590)
 
 
 def test_the_wrong_reading_of_y_norm_would_be_caught():
@@ -173,7 +235,7 @@ def test_export_writes_records_the_fusion_layer_can_load(tmp_path):
     _write_route(route, names)
     _write_dump(tmp_path / "raw.json", names)
 
-    out = export(tmp_path / "raw.json", route)
+    out = export(tmp_path / "raw.json", route, load_config())
 
     loaded = load_detections(out)
     assert set(loaded) == {"f_000000", "f_000001", "f_000002"}
@@ -187,7 +249,7 @@ def test_export_rejects_a_dump_missing_route_frames(tmp_path):
     _write_dump(tmp_path / "raw.json", ["a.png", "b.png"])
 
     with pytest.raises(ValueError) as excinfo:
-        export(tmp_path / "raw.json", route)
+        export(tmp_path / "raw.json", route, load_config())
 
     assert "c.png" in str(excinfo.value)
 
@@ -198,7 +260,7 @@ def test_export_rejects_a_dump_with_unknown_frames(tmp_path):
     _write_dump(tmp_path / "raw.json", ["a.png", "stray.png"])
 
     with pytest.raises(ValueError) as excinfo:
-        export(tmp_path / "raw.json", route)
+        export(tmp_path / "raw.json", route, load_config())
 
     assert "stray.png" in str(excinfo.value)
 
@@ -214,7 +276,7 @@ def test_export_rejects_a_dump_with_no_lanes_anywhere(tmp_path):
     _write_dump(tmp_path / "raw.json", ["a.png", "b.png"], lanes_per_frame=0)
 
     with pytest.raises(ValueError) as excinfo:
-        export(tmp_path / "raw.json", route)
+        export(tmp_path / "raw.json", route, load_config())
 
     assert "critical" in str(excinfo.value)
 
@@ -270,7 +332,7 @@ def test_export_reproduces_the_committed_fixture_artifact(tmp_path):
 
     raw = tmp_path / "raw.json"
     raw.write_text(json.dumps(dump), encoding="utf-8")
-    out = export(raw, fixture, out_path=tmp_path / "lane.jsonl")
+    out = export(raw, fixture, load_config(), out_path=tmp_path / "lane.jsonl")
 
     regenerated = [
         json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()

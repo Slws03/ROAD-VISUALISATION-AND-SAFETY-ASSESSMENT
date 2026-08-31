@@ -32,11 +32,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
+from irap_screening.config import Settings
 from irap_screening.io.schema import DetectionRecord, Frame, LaneInstance, Transform
 from irap_screening.io.sources.fixture import FixtureSource
 
-# The fixed network input size; the crop is resized to this before inference.
-MODEL_WH = (800, 320)
+# The notebook's default resize before inference. Carried in the dump so a
+# changed cv2.resize literal cannot leave a stale value in Transform.
+DEFAULT_MODEL_WH = (800, 320)
 
 
 class RawLaneMeta(BaseModel):
@@ -56,6 +58,7 @@ class RawLaneMeta(BaseModel):
     ori_img_h: int = Field(gt=0)
     ori_img_w: int = Field(gt=0)
     conf_threshold: float = Field(ge=0.0, le=1.0)
+    model_wh: tuple[int, int] = DEFAULT_MODEL_WH
 
     @model_validator(mode="after")
     def _cut_height_matches_crop(self) -> RawLaneMeta:
@@ -140,7 +143,7 @@ def build_record(frame: Frame, raw: RawFrame, meta: RawLaneMeta) -> DetectionRec
             source_wh=raw.source_wh,
             crop_top=meta.crop_top,
             crop_bottom=meta.crop_bottom,
-            model_wh=MODEL_WH,
+            model_wh=meta.model_wh,
         ),
         instances=instances,
     )
@@ -172,10 +175,23 @@ def _pair_with_route(frames: list[Frame], dump: RawLaneDump) -> list[tuple[Frame
     return [(by_name[name], raw_by_name[name]) for name in by_name]
 
 
-def export(raw_path: Path, route_root: Path, out_path: Path | None = None) -> Path:
+def export(
+    raw_path: Path,
+    route_root: Path,
+    cfg: Settings,
+    out_path: Path | None = None,
+) -> Path:
     """Read a CLRerNet dump and write detections/lane.jsonl for a route."""
     raw_path, route_root = Path(raw_path), Path(route_root)
     dump = RawLaneDump.model_validate(json.loads(raw_path.read_text(encoding="utf-8")))
+
+    if dump.meta.conf_threshold > cfg.lane.clrernet_conf:
+        raise ValueError(
+            f"the dump was produced at conf_threshold {dump.meta.conf_threshold}, "
+            f"above lane.clrernet_conf ({cfg.lane.clrernet_conf}). The dump's floor "
+            "is baked in, so the config threshold could never bind and a sensitivity "
+            "sweep below that floor would report no change while changing nothing."
+        )
 
     if not any(raw.lanes for raw in dump.frames):
         raise ValueError(

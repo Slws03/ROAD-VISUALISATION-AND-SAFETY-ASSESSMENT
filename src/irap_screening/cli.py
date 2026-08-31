@@ -89,6 +89,8 @@ def detect_signs(
 def import_lanes(
     route: Path = RouteOption,
     raw: Path = RawOption,
+    config: Path | None = ProfileOption,
+    set_: list[str] | None = SetOption,
 ) -> None:
     """Convert a CLRerNet dump into detections/lane.jsonl.
 
@@ -103,7 +105,7 @@ def import_lanes(
         typer.secho(f"Dump not found: {raw}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
     try:
-        out_path = export(raw, route)
+        out_path = export(raw, route, load_config(profile=config, overrides=set_))
     except ValueError as error:
         typer.secho(str(error), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from error

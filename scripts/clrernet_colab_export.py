@@ -21,7 +21,8 @@ from pathlib import Path
 
 
 def dump_clrernet_results(
-    frame_results, model, crop_top, crop_bottom, image_dir, out_path, load_bgr
+    frame_results, model, crop_top, crop_bottom, image_dir, out_path, load_bgr,
+    model_w=800, model_h=320,
 ):
     """Serialise CLRerNet output plus the geometry it was produced with.
 
@@ -29,6 +30,8 @@ def dump_clrernet_results(
         "filename" and the raw "_result_obj" returned by model.predict.
     load_bgr: the notebook's image loader, used only to record each frame's
         original size. The exporter needs it and it cannot be recovered later.
+    model_w, model_h: the resize the notebook applied before inference. Pass
+        them if the cv2.resize literal in run_clrernet was changed.
     """
     test_cfg = model.bbox_head.test_cfg
     frames = []
@@ -57,7 +60,11 @@ def dump_clrernet_results(
                             )
                         ],
                     }
-                    for lane, score in zip(lanes, scores, strict=False)
+                    # strict: lanes and scores are parallel arrays from one
+                    # result. A length mismatch would mis-pair confidences,
+                    # which modules/lane.py filters on and nothing can detect
+                    # downstream. Fail here, where the user is watching.
+                    for lane, score in zip(lanes, scores, strict=True)
                 ],
             }
         )
@@ -70,6 +77,7 @@ def dump_clrernet_results(
             "ori_img_h": int(test_cfg.ori_img_h),
             "ori_img_w": int(test_cfg.ori_img_w),
             "conf_threshold": float(test_cfg.conf_threshold),
+            "model_wh": [int(model_w), int(model_h)],
             "model": "clrernet_culane_dla34_ema",
         },
         "frames": frames,
