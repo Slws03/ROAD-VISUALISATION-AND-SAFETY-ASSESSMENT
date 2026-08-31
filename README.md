@@ -46,7 +46,7 @@ uv run irap detect-signs --route DIR --weights path/to/best.pt
 `scripts/run_detectors.ps1` wraps both detectors and the report in one command:
 
 ```powershell
-.\scriptsun_detectors.ps1 -Route D:outes\kuching_01 -Report
+.\scripts\run_detectors.ps1 -Route D:\routes\kuching_01 -Report
 ```
 
 It refuses to run without a CLRerNet dump unless `-SkipLanes` is passed, because
