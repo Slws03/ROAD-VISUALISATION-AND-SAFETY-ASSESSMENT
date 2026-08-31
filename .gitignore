@@ -9,6 +9,9 @@ __pycache__/
 venv/
 *.egg-info/
 
+# Report output written by the documented quick start
+out/
+
 # Data & model artifacts
 dataset/
 data/
