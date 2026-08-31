@@ -7,9 +7,10 @@ into per-segment iRAP mid-block attribute flags and gap-based recommendations.
 
 GPU detectors and the CPU fusion layer are decoupled through on-disk artifacts.
 Detectors write `detections/*.jsonl`; everything downstream runs CPU-only. This
-keeps CLRerNet's mmcv-pinned environment away from ultralytics, makes threshold
-sweeps cost seconds instead of hours, and lets the decision logic be reproduced
-without a GPU.
+keeps CLRerNet's mmcv-pinned environment away from ultralytics, and lets the
+decision logic be reproduced without a GPU. Because detections are cached on
+disk, re-running the decision layer against different thresholds costs seconds
+rather than re-running inference.
 
 ## Quick start
 
@@ -59,5 +60,10 @@ uv run irap report --route fixtures/route_demo --set curvature.threshold_m=350
   passing unnoticed; defect sizing needs camera intrinsics and mounting height.
 - Rutting is out of scope; it needs continuous deformation measurement along the
   wheel path.
+- Advance warning signs are checked at a point 230 m upstream of the hazard, so a
+  hazard within the first 230 m of a recorded route has no observable upstream
+  window and its advance sign is always reported missing. This is conservative
+  rather than wrong, but it means route-start segments carry a known false
+  positive for `advance_bend_sign`.
 - This project does not reproduce full iRAP Star Ratings: there is no crash data
   available for FSI calibration.
