@@ -28,6 +28,7 @@ external data.
 | --- | --- |
 | `irap report --route DIR --out DIR` | Full CPU layer; writes JSON, GeoJSON and Markdown |
 | `irap detect-signs --route DIR --weights W.pt` | Runs the YOLO sign detector; writes `detections/sign.jsonl` |
+| `irap import-lanes --route DIR --raw dump.json` | Converts a CLRerNet dump; writes `detections/lane.jsonl` |
 
 `irap sweep`, `irap validate` and `irap config show` are designed but not yet
 implemented in this build.
@@ -47,9 +48,19 @@ against a weight whose class names are not exactly the five the decision layer
 matches on -- a drifted name would flow through every layer cleanly and then
 report present signage as missing.
 
-Lane detections come from CLRerNet, whose mmcv-pinned environment is kept
-separate; export its `lane.jsonl` and drop it into the same `detections/`
-directory.
+Lane detections come from CLRerNet, whose mmcv-pinned environment is not
+reproduced here. Inference runs on Colab; `scripts/clrernet_colab_export.py` is
+a cell that serialises its raw output, and `irap import-lanes` converts that
+dump locally:
+
+```bash
+uv run irap import-lanes --route DIR --raw clrernet_raw.json
+```
+
+The split is deliberate. The Colab cell only writes numbers down; the mapping
+from CLRerNet's normalised coordinates back to original-image pixels is the part
+that can be plausibly wrong, so it lives in the tested codebase rather than in
+an environment that cannot be reproduced.
 
 ## Configuration
 

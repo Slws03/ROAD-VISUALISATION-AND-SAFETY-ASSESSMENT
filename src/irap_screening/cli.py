@@ -36,6 +36,7 @@ ProfileOption = typer.Option(None, "--config", help="Profile YAML overriding def
 RouteIdOption = typer.Option("R01", "--route-id", help="Identifier used in segment ids.")
 WeightsOption = typer.Option(..., "--weights", help="Path to the YOLO sign weight (.pt).")
 DeviceOption = typer.Option("cpu", "--device", help="Inference device, e.g. cpu or 0.")
+RawOption = typer.Option(..., "--raw", help="CLRerNet dump written by the Colab cell.")
 
 
 def _require_route(route: Path) -> Path:
@@ -81,6 +82,31 @@ def detect_signs(
     route = _require_route(route)
     cfg = load_config(profile=config, overrides=set_)
     out_path = run_sign_runner(route, weights, cfg, device=device)
+    typer.echo(f"Wrote {out_path}")
+
+
+@app.command(name="import-lanes")
+def import_lanes(
+    route: Path = RouteOption,
+    raw: Path = RawOption,
+) -> None:
+    """Convert a CLRerNet dump into detections/lane.jsonl.
+
+    CLRerNet runs in an mmcv-pinned environment this project does not reproduce,
+    so inference happens on Colab and only the numbers come back. The coordinate
+    mapping back to original-image pixels happens here, where it is tested.
+    """
+    from irap_screening.runners.lane import export
+
+    route = _require_route(route)
+    if not Path(raw).exists():
+        typer.secho(f"Dump not found: {raw}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    try:
+        out_path = export(raw, route)
+    except ValueError as error:
+        typer.secho(str(error), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from error
     typer.echo(f"Wrote {out_path}")
 
 

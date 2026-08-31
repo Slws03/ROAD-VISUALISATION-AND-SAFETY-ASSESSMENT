@@ -57,3 +57,20 @@ def test_detect_signs_is_registered_without_importing_torch():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0, result.output
     assert "detect-signs" in result.output
+
+
+def test_import_lanes_is_registered():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0, result.output
+    assert "import-lanes" in result.output
+
+
+def test_import_lanes_reports_a_missing_dump(tmp_path: Path):
+    route = tmp_path / "route"
+    route.mkdir()
+    _write_route(route)
+
+    result = runner.invoke(
+        app, ["import-lanes", "--route", str(route), "--raw", str(tmp_path / "nope.json")]
+    )
+    assert result.exit_code != 0
