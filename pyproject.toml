@@ -16,6 +16,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.4"]
+# Detection runners only. Kept out of the base install so the CPU fusion layer
+# never needs torch: install with `uv sync --extra runners`.
+runners = ["ultralytics>=8.3,<9"]
 
 [project.scripts]
 irap = "irap_screening.cli:app"

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, PositiveFloat, PositiveInt
+from pydantic import BaseModel, Field, PositiveFloat, PositiveInt, model_validator
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "default.yaml"
 
@@ -75,7 +75,25 @@ class DoubleLineSettings(_Section):
 
 
 class SignSettings(_Section):
-    conf: float = Field(default=0.0, ge=0.0, le=1.0)
+    runner_conf: float = Field(default=0.10, ge=0.0, le=1.0)
+    conf: float = Field(default=0.25, ge=0.0, le=1.0)
+    imgsz: PositiveInt = 1280
+
+    @model_validator(mode="after")
+    def _runner_is_the_more_permissive_floor(self) -> SignSettings:
+        """Reject an inverted pair, which silently disables the CPU-side threshold.
+
+        The runner writes its floor into the cached artifact, so a runner floor
+        above conf makes conf unreachable: the low-confidence band the design
+        reserves for review is discarded before the CPU layer ever sees it.
+        """
+        if self.runner_conf > self.conf:
+            raise ValueError(
+                f"sign.runner_conf ({self.runner_conf}) must not exceed sign.conf "
+                f"({self.conf}); the runner's floor is baked into the cached "
+                "detections and cannot be relaxed afterwards"
+            )
+        return self
 
 
 class IpmSettings(_Section):

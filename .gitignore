@@ -1,5 +1,6 @@
 # Design/spec documents — kept local, not tracked
 docs/superpowers/
+docs/NEXT_STEPS.md
 
 # Python
 __pycache__/

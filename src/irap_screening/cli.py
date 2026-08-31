@@ -25,8 +25,7 @@ def _main() -> None:
     Typer collapses an app with a single registered command into a bare command,
     which breaks subcommand dispatch. Registering any callback keeps it a group.
     Do not add invoke_without_command=True: that also disables help-on-no-args,
-    so a bare `irap` would exit silently. This callback becomes redundant once a
-    second command is registered and can be removed then.
+    so a bare `irap` would exit silently.
     """
 
 
@@ -35,6 +34,8 @@ OutOption = typer.Option(Path("out"), "--out", help="Output directory.")
 SetOption = typer.Option(None, "--set", help="Override a threshold, as key=value.")
 ProfileOption = typer.Option(None, "--config", help="Profile YAML overriding defaults.")
 RouteIdOption = typer.Option("R01", "--route-id", help="Identifier used in segment ids.")
+WeightsOption = typer.Option(..., "--weights", help="Path to the YOLO sign weight (.pt).")
+DeviceOption = typer.Option("cpu", "--device", help="Inference device, e.g. cpu or 0.")
 
 
 def _require_route(route: Path) -> Path:
@@ -59,6 +60,28 @@ def report(
     result = run_pipeline(route, cfg, route_id=route_id)
     write_report(out, result)
     typer.echo(f"Wrote {len(result['segments'])} segments to {out}")
+
+
+@app.command(name="detect-signs")
+def detect_signs(
+    route: Path = RouteOption,
+    weights: Path = WeightsOption,
+    config: Path | None = ProfileOption,
+    set_: list[str] | None = SetOption,
+    device: str = DeviceOption,
+) -> None:
+    """Run the YOLO sign detector over a route and cache detections/sign.jsonl.
+
+    Requires the optional runners extra (`uv sync --extra runners`). This is the
+    only command that needs a model; once it has written its artifact, every
+    later `irap report` and threshold sweep runs from the cache.
+    """
+    from irap_screening.runners.sign import run as run_sign_runner
+
+    route = _require_route(route)
+    cfg = load_config(profile=config, overrides=set_)
+    out_path = run_sign_runner(route, weights, cfg, device=device)
+    typer.echo(f"Wrote {out_path}")
 
 
 if __name__ == "__main__":

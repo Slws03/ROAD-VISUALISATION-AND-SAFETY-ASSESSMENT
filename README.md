@@ -27,9 +27,29 @@ external data.
 | Command | Purpose |
 | --- | --- |
 | `irap report --route DIR --out DIR` | Full CPU layer; writes JSON, GeoJSON and Markdown |
+| `irap detect-signs --route DIR --weights W.pt` | Runs the YOLO sign detector; writes `detections/sign.jsonl` |
 
 `irap sweep`, `irap validate` and `irap config show` are designed but not yet
 implemented in this build.
+
+## Detection runners
+
+`irap detect-signs` is the only command that needs a model. It lives behind an
+optional extra so the CPU layer never installs torch:
+
+```bash
+uv sync --extra runners
+uv run irap detect-signs --route DIR --weights path/to/best.pt
+```
+
+CPU inference is adequate for screening-rate imagery. The runner refuses to run
+against a weight whose class names are not exactly the five the decision layer
+matches on -- a drifted name would flow through every layer cleanly and then
+report present signage as missing.
+
+Lane detections come from CLRerNet, whose mmcv-pinned environment is kept
+separate; export its `lane.jsonl` and drop it into the same `detections/`
+directory.
 
 ## Configuration
 
@@ -65,5 +85,8 @@ uv run irap report --route fixtures/route_demo --set curvature.threshold_m=350
   window and its advance sign is always reported missing. This is conservative
   rather than wrong, but it means route-start segments carry a known false
   positive for `advance_bend_sign`.
+- The committed fixture contains no `sign.jsonl`, and its `lane.jsonl` is
+  synthesised rather than produced by CLRerNet. The fixture exercises the
+  decision layer; it is not evidence about detector accuracy.
 - This project does not reproduce full iRAP Star Ratings: there is no crash data
   available for FSI calibration.

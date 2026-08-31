@@ -45,3 +45,15 @@ def test_report_accepts_inline_threshold_override(tmp_path: Path):
 def test_missing_route_exits_with_an_error(tmp_path: Path):
     result = runner.invoke(app, ["report", "--route", str(tmp_path / "nope")])
     assert result.exit_code != 0
+
+
+def test_detect_signs_is_registered_without_importing_torch():
+    """The runner command must be reachable from a base install.
+
+    Its ultralytics import is deliberately inside the command body, so listing
+    and validating the CLI never pulls in the optional extra. If that import
+    moved to module scope, this fails on any environment without it.
+    """
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0, result.output
+    assert "detect-signs" in result.output

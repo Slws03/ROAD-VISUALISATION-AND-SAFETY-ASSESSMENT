@@ -47,7 +47,17 @@ doubleline:                      # from the doubleline_coord_scan experiment
   anchor_tol_px: 20
 
 sign:
-  conf: 0.0                      # accept YOLO default; low-conf cases escalate later
+  runner_conf: 0.10              # GPU-side floor, written into the cached artifact.
+                                 # Must stay <= sign.conf: anything the runner drops
+                                 # can never be reconsidered, so it is deliberately
+                                 # permissive and the CPU layer decides.
+  conf: 0.25                     # CPU-side accept threshold. Detections between
+                                 # runner_conf and conf are the low-confidence
+                                 # population reserved for later LLM review; today
+                                 # they are simply not accepted as present signage,
+                                 # which over-reports missing signs rather than
+                                 # under-reporting them.
+  imgsz: 1280                    # matches the training run (args.yaml imgsz: 1280)
 
 condition:
   yolo_conf: 0.35
