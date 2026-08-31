@@ -2,7 +2,7 @@
 
 The design philosophy is: state the road fact, check whether the matching
 mitigation already exists, and recommend only where there is a gap. A module
-flag and a recommendation are therefore different things — a critical curve
+flag and a recommendation are therefore different things -- a critical curve
 with its warning sign and chevrons in place keeps the critical flag and yields
 no recommendation.
 

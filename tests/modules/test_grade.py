@@ -70,7 +70,7 @@ def test_gyro_term_actually_contributes():
     """A rotation the accelerometer cannot see must still move the estimate.
 
     Every factory route has gy == 0 and a constant accelerometer pitch, which
-    makes the recurrence degenerate to the identity — so without this case a
+    makes the recurrence degenerate to the identity -- so without this case a
     broken gyro term would be invisible to the whole suite.
     """
     frames, gps, _ = straight_route(length_m=200.0)
