@@ -18,6 +18,7 @@ from irap_screening.io.schema import (
     ModuleResult,
     Recommendation,
     Segment,
+    SignRecord,
 )
 
 CFG = load_config()
@@ -158,3 +159,47 @@ def test_write_report_produces_all_three_files(tmp_path: Path):
     assert (tmp_path / "report.md").exists()
     loaded = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert loaded["schema_version"] == SCHEMA_VERSION
+
+
+def test_condition_is_carried_even_though_it_is_a_stub():
+    """Road Condition is a declared stub, and the report must still carry it.
+
+    The stub exists precisely because "condition" is one of the four
+    SCORING_MODULES here. Dropping it would hide an unimplemented attribute
+    instead of surfacing it, which is what not_assessed is for.
+    """
+    report = _report()
+
+    for record in report["segments"]:
+        assert "condition" in record
+        assert "flag" in record["condition"]
+
+    assert "condition" in report["coverage"]
+    assert report["coverage"]["condition"]["total"] == len(report["segments"])
+
+
+def test_signs_double_line_and_frame_reference_are_rendered():
+    """Nothing else in the suite fills these three dashboard fields.
+
+    Without this test, deleting the lines that populate signs, double_line and
+    representative_frame_id would leave every other test green.
+    """
+    segments, module_results, existence, recommendations = _fixture()
+    segments[0].frame_ids = ["f_000001", "f_000002"]
+    existence[0] = ExistenceResult(
+        segment_id="R01-0000",
+        signs=[SignRecord(id="f_000001#sign#0", cls="Bend", conf=0.91, at_m=70.0)],
+        double_line=DoubleLineRecord(
+            present=True, confidence=0.8, evidence=["f_000001#lane#0"]
+        ),
+    )
+
+    report = build_report(
+        "R01", segments, module_results, existence, recommendations, cfg=CFG
+    )
+    first = report["segments"][0]
+
+    assert first["signs"][0]["cls"] == "Bend"
+    assert first["signs"][0]["at_m"] == 70.0
+    assert first["double_line"]["present"] is True
+    assert first["representative_frame_id"] == "f_000001"
