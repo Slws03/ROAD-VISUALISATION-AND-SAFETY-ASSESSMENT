@@ -29,6 +29,7 @@ external data.
 | `irap report --route DIR --out DIR` | Full CPU layer; writes JSON, GeoJSON and Markdown |
 | `irap detect-signs --route DIR --weights W.pt` | Runs the YOLO sign detector; writes `detections/sign.jsonl` |
 | `irap import-lanes --route DIR --raw dump.json` | Converts a CLRerNet dump; writes `detections/lane.jsonl` |
+| `irap view --route DIR` | Builds and serves a local page for inspecting the results |
 
 `irap sweep`, `irap validate` and `irap config show` are designed but not yet
 implemented in this build.
@@ -73,6 +74,20 @@ can be plausibly wrong, so it lives in the tested codebase rather than in an
 environment that cannot be reproduced. `tests/test_notebook_export.py` pins the
 two together: it executes the notebook's dump and overlay cells against stubs
 and fails if either drifts from the exporter.
+
+## Viewer
+
+`irap view` is a verification tool: it puts each segment's flags next to the
+frames that produced them, with the detections drawn on.
+
+```bash
+uv run irap view --route fixtures/route_demo
+```
+
+It builds `view/`, serves it on localhost and opens a browser. Arrow keys step
+through a segment's frames. Overlays are rendered in Python rather than on a
+canvas in the browser, so the coordinate arithmetic keeps a single tested
+implementation instead of a second, unwatched one in JavaScript.
 
 ## Configuration
 

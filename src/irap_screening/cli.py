@@ -37,6 +37,10 @@ RouteIdOption = typer.Option("R01", "--route-id", help="Identifier used in segme
 WeightsOption = typer.Option(..., "--weights", help="Path to the YOLO sign weight (.pt).")
 DeviceOption = typer.Option("cpu", "--device", help="Inference device, e.g. cpu or 0.")
 RawOption = typer.Option(..., "--raw", help="CLRerNet dump written by the Colab cell.")
+ViewOutOption = typer.Option(Path("view"), "--out", help="Viewer output directory.")
+PortOption = typer.Option(8000, "--port", help="Port for the local viewer server.")
+NoServeOption = typer.Option(False, "--no-serve", help="Build the viewer, do not serve it.")
+NoOpenOption = typer.Option(False, "--no-open", help="Serve without opening a browser.")
 
 
 def _require_route(route: Path) -> Path:
@@ -110,6 +114,38 @@ def import_lanes(
         typer.secho(str(error), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from error
     typer.echo(f"Wrote {out_path}")
+
+
+@app.command(name="view")
+def view(
+    route: Path = RouteOption,
+    out: Path = ViewOutOption,
+    config: Path | None = ProfileOption,
+    set_: list[str] | None = SetOption,
+    route_id: str = RouteIdOption,
+    port: int = PortOption,
+    no_serve: bool = NoServeOption,
+    no_open: bool = NoOpenOption,
+) -> None:
+    """Build and serve a local page for inspecting a route's results.
+
+    A verification tool: it puts each segment's flags next to the frames that
+    produced them, with the detections drawn on. It serves over HTTP rather than
+    writing a file to double-click because the page fetches its data, which the
+    browser refuses to do from a file:// URL.
+    """
+    from irap_screening.view.export import export_view
+    from irap_screening.view.serve import serve_directory
+
+    route = _require_route(route)
+    cfg = load_config(profile=config, overrides=set_)
+    out_dir = export_view(route, cfg, out, route_id=route_id)
+    typer.echo(f"Built {out_dir}")
+
+    if no_serve:
+        typer.echo(f"Serve it with: python -m http.server -d {out_dir}")
+        return
+    serve_directory(out_dir, port=port, open_browser=not no_open)
 
 
 if __name__ == "__main__":

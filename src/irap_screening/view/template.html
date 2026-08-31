@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iRAP screening viewer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f26;
+    --line: #2c313b;
+    --text: #e6e8ec;
+    --muted: #949bab;
+    --normal: #3fb950;
+    --watch: #d29922;
+    --critical: #f85149;
+    --unassessed: #6e7681;
+  }
+  * { box-sizing: border-box; }
+  body {
+    /* Without overflow:hidden the window scrolls instead of the panels, which
+       breaks scroll preservation when stepping frames and drags the sidebar
+       off-screen. */
+    margin: 0; height: 100vh; overflow: hidden; display: flex;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  }
+  aside {
+    width: 340px; flex: none; display: flex; flex-direction: column;
+    border-right: 1px solid var(--line); background: var(--panel);
+  }
+  header { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0 0 2px; font-size: 15px; }
+  .sub { color: var(--muted); font-size: 12px; }
+  #coverage { padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 12px; }
+  #coverage span { color: var(--muted); }
+  #segments { flex: 1; overflow-y: auto; }
+  .seg {
+    padding: 9px 16px; border-bottom: 1px solid var(--line);
+    cursor: pointer; display: flex; align-items: center; gap: 9px;
+  }
+  .seg:hover { background: #232730; }
+  .seg.active { background: #2b3040; }
+  .seg .id { font-variant-numeric: tabular-nums; }
+  .seg .range { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .dot.normal { background: var(--normal); }
+  .dot.watch { background: var(--watch); }
+  .dot.critical { background: var(--critical); }
+  .dot.not_assessed { background: var(--unassessed); }
+  #map { height: 220px; border-top: 1px solid var(--line); background: #0f1114; }
+  main { flex: 1; overflow-y: auto; padding: 20px 24px; }
+  .empty { color: var(--muted); margin-top: 40px; text-align: center; }
+  figure { margin: 0 0 16px; }
+  figure img {
+    width: 100%; max-width: 900px; display: block;
+    border: 1px solid var(--line); border-radius: 4px; background: #000;
+  }
+  figcaption {
+    display: flex; align-items: center; gap: 12px;
+    margin-top: 8px; color: var(--muted); font-size: 12px;
+  }
+  button {
+    background: #262b35; color: var(--text); border: 1px solid var(--line);
+    border-radius: 4px; padding: 4px 11px; cursor: pointer; font: inherit;
+  }
+  button:disabled { opacity: .4; cursor: default; }
+  table { border-collapse: collapse; width: 100%; max-width: 900px; margin-bottom: 18px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.flag { font-weight: 600; }
+  td.flag.normal { color: var(--normal); }
+  td.flag.watch { color: var(--watch); }
+  td.flag.critical { color: var(--critical); }
+  td.flag.not_assessed { color: var(--unassessed); }
+  .metrics { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .rec {
+    border-left: 3px solid var(--critical); background: #21242c;
+    padding: 10px 14px; margin-bottom: 10px; max-width: 900px; border-radius: 0 4px 4px 0;
+  }
+  .rec .rule { font-weight: 600; }
+  .rec .detail { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  h2 { font-size: 13px; color: var(--muted); font-weight: 500;
+       text-transform: uppercase; letter-spacing: .04em; margin: 22px 0 8px; }
+  code { background: #262b35; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+</style>
+</head>
+<body>
+<aside>
+  <header>
+    <h1 id="route">Loading…</h1>
+    <div class="sub" id="generated"></div>
+  </header>
+  <div id="coverage"></div>
+  <div id="segments"></div>
+  <div id="map"></div>
+</aside>
+<main><div class="empty" id="main-empty">Select a segment.</div></main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const MODULES = ["curvature", "grade", "lane", "condition"];
+const FLAG_COLOR = {
+  normal: "#3fb950", watch: "#d29922",
+  critical: "#f85149", not_assessed: "#6e7681",
+};
+
+let data = null;
+let selected = null;
+let frameIndex = 0;
+let map = null;
+const layers = {};
+
+// The worst flag across the modules is what the list dot shows: a segment is as
+// bad as its worst attribute, which is how iRAP aggregates within a unit.
+const SEVERITY = ["not_assessed", "normal", "watch", "critical"];
+function worstFlag(segment) {
+  let worst = "not_assessed";
+  for (const module of MODULES) {
+    const flag = segment[module] && segment[module].flag;
+    if (flag && SEVERITY.indexOf(flag) > SEVERITY.indexOf(worst)) worst = flag;
+  }
+  return worst;
+}
+
+function metricsOf(entry) {
+  return Object.entries(entry)
+    .filter(([key, value]) => key !== "flag" && key !== "notes"
+                              && typeof value === "number")
+    .map(([key, value]) => `${key}=${Number(value.toFixed(3))}`)
+    .join("  ");
+}
+
+function renderSidebar() {
+  document.getElementById("route").textContent = `Route ${data.route_id}`;
+  document.getElementById("generated").textContent =
+    `${data.segments.length} segments · ${data.generated_at}`;
+
+  document.getElementById("coverage").innerHTML = MODULES.map((module) => {
+    const cov = (data.coverage && data.coverage[module]) || {};
+    const total = cov.total ?? 0;
+    const missing = cov.not_assessed ?? 0;
+    return `<div>${module} <span>${total - missing} of ${total} assessed`
+         + (missing ? `, ${missing} not assessed` : "") + `</span></div>`;
+  }).join("");
+
+  document.getElementById("segments").innerHTML = data.segments.map((segment, i) => {
+    const flag = worstFlag(segment);
+    const start = Math.round(segment.start_m), end = Math.round(segment.end_m);
+    return `<div class="seg" data-i="${i}">`
+         + `<span class="dot ${flag}"></span>`
+         + `<span class="id">${segment.segment_id}</span>`
+         + `<span class="range">${start}-${end} m</span></div>`;
+  }).join("");
+
+  document.querySelectorAll(".seg").forEach((node) => {
+    node.addEventListener("click", () => select(Number(node.dataset.i)));
+  });
+}
+
+function renderMap() {
+  const points = data.segments.flatMap((s) => [s.start_latlon, s.end_latlon]);
+  if (!points.length || typeof L === "undefined") {
+    // Leaflet comes from a CDN; with no network the map is simply absent and
+    // everything else still works.
+    document.getElementById("map").style.display = "none";
+    return;
+  }
+  map = L.map("map", { attributionControl: false });
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 })
+    .addTo(map);
+  data.segments.forEach((segment, i) => {
+    const line = L.polyline([segment.start_latlon, segment.end_latlon], {
+      color: FLAG_COLOR[worstFlag(segment)], weight: 5,
+    }).addTo(map);
+    line.on("click", () => select(i));
+    layers[i] = line;
+  });
+  map.fitBounds(L.latLngBounds(points).pad(0.2));
+}
+
+function moduleRows(segment) {
+  return MODULES.map((module) => {
+    const entry = segment[module] || {};
+    const detail = entry.notes ? entry.notes : metricsOf(entry);
+    return `<tr><td>${module}</td>`
+         + `<td class="flag ${entry.flag}">${entry.flag ?? "-"}</td>`
+         + `<td class="metrics">${detail}</td></tr>`;
+  }).join("");
+}
+
+function signsBlock(segment) {
+  if (!segment.signs || !segment.signs.length) {
+    const dl = segment.double_line || {};
+    return `<p class="metrics">No signs accepted in this segment. `
+         + `Double line: ${dl.present ? "present" : "absent"}`
+         + (dl.present ? ` (confidence ${dl.confidence.toFixed(2)})` : "")
+         + `</p>`;
+  }
+  return `<table><tr><th>class</th><th>conf</th><th>at</th></tr>`
+       + segment.signs.map((sign) =>
+           `<tr><td>${sign.cls}</td><td class="metrics">${sign.conf.toFixed(2)}</td>`
+         + `<td class="metrics">${Math.round(sign.at_m)} m</td></tr>`).join("")
+       + `</table>`;
+}
+
+function recommendationsBlock(segment) {
+  if (!segment.recommendations || !segment.recommendations.length) {
+    return `<p class="metrics">No gap found: every matching mitigation is present.</p>`;
+  }
+  return segment.recommendations.map((rec) =>
+    `<div class="rec"><div class="rule">${rec.priority} · ${rec.rule}</div>`
+  + `<div class="detail">${rec.text}</div>`
+  + `<div class="detail">missing: ${rec.missing.join(", ") || "-"} · `
+  + `present: ${rec.present.join(", ") || "-"}</div></div>`).join("");
+}
+
+// Stepping frames swaps the image in place rather than rebuilding the panel.
+// Rebuilding scrolls back to the top, and restoring scrollTop afterwards does
+// not work: the new image has not loaded yet, so the panel is momentarily too
+// short and the assignment is clamped.
+function showFrame() {
+  const frames = data.segments[selected].frame_ids || [];
+  const image = document.getElementById("frame-img");
+  if (!image) return;
+  const frameId = frames[frameIndex];
+  image.src = `evidence/${frameId}.jpg`;
+  image.alt = frameId;
+  document.getElementById("frame-caption").innerHTML =
+    `<code>${frameId}</code> · frame ${frameIndex + 1} of ${frames.length}`;
+  document.getElementById("prev").disabled = frameIndex === 0;
+  document.getElementById("next").disabled = frameIndex >= frames.length - 1;
+}
+
+function step(delta) {
+  const frames = data.segments[selected].frame_ids || [];
+  const next = frameIndex + delta;
+  if (next < 0 || next >= frames.length) return;
+  frameIndex = next;
+  showFrame();
+}
+
+function renderDetail() {
+  const segment = data.segments[selected];
+  const frames = segment.frame_ids || [];
+  document.querySelector("main").innerHTML = `
+    <h2>Evidence</h2>
+    ${frames.length
+      ? `<figure>
+           <img id="frame-img" alt="">
+           <figcaption>
+             <button id="prev">&larr;</button>
+             <button id="next">&rarr;</button>
+             <span id="frame-caption"></span>
+             <span>green = lane points, amber = signs</span>
+           </figcaption>
+         </figure>`
+      : `<p class="metrics">No frames fall within this segment.</p>`}
+    <h2>${segment.segment_id} · ${Math.round(segment.start_m)}-${Math.round(segment.end_m)} m</h2>
+    <table><tr><th>module</th><th>flag</th><th>metrics</th></tr>
+      ${moduleRows(segment)}</table>
+    <h2>Signs and markings</h2>
+    ${signsBlock(segment)}
+    <h2>Recommendations</h2>
+    ${recommendationsBlock(segment)}
+  `;
+  if (frames.length) {
+    document.getElementById("prev").addEventListener("click", () => step(-1));
+    document.getElementById("next").addEventListener("click", () => step(1));
+    showFrame();
+  }
+}
+
+function select(index) {
+  selected = index;
+  frameIndex = 0;
+  document.querySelectorAll(".seg").forEach((node) =>
+    node.classList.toggle("active", Number(node.dataset.i) === index));
+  if (map && layers[index]) map.fitBounds(layers[index].getBounds().pad(1.5));
+  renderDetail();
+}
+
+document.addEventListener("keydown", (event) => {
+  if (selected === null) return;
+  if (event.key === "ArrowLeft") step(-1);
+  if (event.key === "ArrowRight") step(1);
+});
+
+fetch("data.json")
+  .then((response) => response.json())
+  .then((payload) => {
+    data = payload;
+    renderSidebar();
+    renderMap();
+    if (data.segments.length) select(0);
+  })
+  .catch((error) => {
+    document.getElementById("main-empty").textContent =
+      "Could not load data.json - open this page through the local server "
+      + "(irap view), not by double-clicking the file. " + error;
+  });
+</script>
+</body>
+</html>

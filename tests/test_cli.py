@@ -8,6 +8,8 @@ from typer.testing import CliRunner
 from irap_screening.cli import app
 from tests.test_pipeline import _write_route
 
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "route_demo"
+
 runner = CliRunner()
 
 
@@ -74,3 +76,17 @@ def test_import_lanes_reports_a_missing_dump(tmp_path: Path):
         app, ["import-lanes", "--route", str(route), "--raw", str(tmp_path / "nope.json")]
     )
     assert result.exit_code != 0
+
+
+def test_view_builds_without_serving(tmp_path: Path):
+    """--no-serve must produce the directory and return, not block on a server."""
+    out = tmp_path / "view"
+    result = runner.invoke(
+        app,
+        ["view", "--route", str(FIXTURE), "--out", str(out), "--no-serve"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (out / "index.html").exists()
+    assert (out / "data.json").exists()
+    assert list((out / "evidence").glob("*.jpg"))

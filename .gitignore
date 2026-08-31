@@ -9,8 +9,10 @@ __pycache__/
 venv/
 *.egg-info/
 
-# Report output written by the documented quick start
-out/
+# Generated output: the report and the local viewer. Anchored with a
+# leading slash: a bare view/ would also swallow src/irap_screening/view/.
+/out/
+/view/
 
 # Data & model artifacts
 dataset/
