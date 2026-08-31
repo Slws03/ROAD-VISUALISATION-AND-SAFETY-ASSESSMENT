@@ -49,18 +49,20 @@ matches on -- a drifted name would flow through every layer cleanly and then
 report present signage as missing.
 
 Lane detections come from CLRerNet, whose mmcv-pinned environment is not
-reproduced here. Inference runs on Colab; `scripts/clrernet_colab_export.py` is
-a cell that serialises its raw output, and `irap import-lanes` converts that
-dump locally:
+reproduced here. `notebooks/clrernet_export.ipynb` is a self-contained Colab
+notebook -- install, patches, inference, dump -- that writes one
+`clrernet_raw.json`. `irap import-lanes` converts it locally:
 
 ```bash
 uv run irap import-lanes --route DIR --raw clrernet_raw.json
 ```
 
-The split is deliberate. The Colab cell only writes numbers down; the mapping
-from CLRerNet's normalised coordinates back to original-image pixels is the part
-that can be plausibly wrong, so it lives in the tested codebase rather than in
-an environment that cannot be reproduced.
+The split is deliberate. The notebook only writes numbers down; the mapping from
+CLRerNet's normalised coordinates back to original-image pixels is the part that
+can be plausibly wrong, so it lives in the tested codebase rather than in an
+environment that cannot be reproduced. `tests/test_notebook_export.py` pins the
+two together: it executes the notebook's dump and overlay cells against stubs
+and fails if either drifts from the exporter.
 
 ## Configuration
 
