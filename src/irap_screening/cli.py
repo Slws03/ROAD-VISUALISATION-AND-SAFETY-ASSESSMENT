@@ -18,10 +18,16 @@ from irap_screening.pipeline import run_pipeline
 app = typer.Typer(help="Dashcam and IMU based iRAP road safety screening.")
 
 
-@app.callback(invoke_without_command=True)
-def main() -> None:
-    """Dashcam and IMU based iRAP road safety screening."""
-    pass
+@app.callback()
+def _main() -> None:
+    """Force multi-command mode.
+
+    Typer collapses an app with a single registered command into a bare command,
+    which breaks subcommand dispatch. Registering any callback keeps it a group.
+    Do not add invoke_without_command=True: that also disables help-on-no-args,
+    so a bare `irap` would exit silently. This callback becomes redundant once a
+    second command is registered and can be removed then.
+    """
 
 
 RouteOption = typer.Option(..., "--route", help="Route directory to analyse.")

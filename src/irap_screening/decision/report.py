@@ -167,9 +167,11 @@ def to_markdown(report: dict[str, Any]) -> str:
         lines.append("")
         for recommendation in record["recommendations"]:
             missing = ", ".join(recommendation["missing"]) or "none"
+            # text already names the missing mitigations in a full sentence; fall
+            # back to the bare list only when a rule supplies no text.
+            detail = recommendation["text"] or f"missing: {missing}."
             lines.append(
-                f"- **{recommendation['priority']}** - {recommendation['rule']} - "
-                f"missing: {missing}. {recommendation['text']}"
+                f"- **{recommendation['priority']}** - {recommendation['rule']} - {detail}"
             )
         lines.append("")
     return "\n".join(lines) + "\n"
