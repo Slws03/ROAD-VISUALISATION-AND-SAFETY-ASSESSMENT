@@ -40,6 +40,20 @@ def _single_line_image() -> np.ndarray:
     return gray
 
 
+def _decoy_image() -> np.ndarray:
+    """A lone true stroke on the anchor, plus a bright pair far to the left.
+
+    Correct code never returns the decoy pair: at every window width the pair is
+    either outside the window, rejected by anchor_tol, or rejected by max_gap.
+    A naive full-row scan that grabs the first two blobs returns the decoy's gap.
+    """
+    gray = np.full((480, 640), BG, dtype=np.uint8)
+    gray[:, ANCHOR_X - 2 : ANCHOR_X + 3] = 230   # the real, single stroke
+    gray[:, 98:103] = 230                        # decoy pair, 60 px apart,
+    gray[:, 158:163] = 230                       # both far from the anchor
+    return gray
+
+
 def test_weber_blobs_finds_two_bright_spans():
     gray = _double_line_image(gap_px=28)
     blobs = weber_blobs(gray[ANCHOR_Y], load_config())
@@ -73,6 +87,31 @@ def test_scan_widens_window_to_find_far_apart_strokes():
     assert gap == pytest.approx(120.0, abs=10.0)
 
 
+def test_scan_rejects_a_bright_pair_far_from_the_anchor():
+    """Widening the window must not let an unrelated marking pair up.
+
+    This is what anchor_tol_px exists for. Without the window and the tolerance
+    check, the decoy pair at x=100/160 would be reported as a double line even
+    though the anchored lane point sits at x=320 with a single stroke.
+    """
+    assert scan_near_lane_point(
+        _decoy_image(), float(ANCHOR_X), float(ANCHOR_Y), load_config()
+    ) is None
+
+
+def test_a_stroke_split_by_a_one_pixel_dropout_still_counts_as_one_blob():
+    """Worn paint drops pixels; merging must happen before the width filter.
+
+    The two fragments are 2 px each, below min_width=3, so a filter-first
+    implementation discards both and finds nothing. Merging first joins them
+    into a single 5 px span that passes.
+    """
+    gray = np.full((480, 640), BG, dtype=np.uint8)
+    gray[:, 318:320] = 230      # fragment one
+    gray[:, 321:323] = 230      # fragment two, separated by a single dark pixel
+    assert len(weber_blobs(gray[ANCHOR_Y], load_config())) == 1
+
+
 def _build(tmp_path: Path, gray: np.ndarray, sign_cls: str | None):
     frames, gps, imu = straight_route(length_m=200.0)
     for frame in frames:
@@ -103,10 +142,10 @@ def _build(tmp_path: Path, gray: np.ndarray, sign_cls: str | None):
     }
     sign = {}
     if sign_cls is not None:
-        first = frames[0]
-        sign[first.frame_id] = DetectionRecord(
-            frame_id=first.frame_id,
-            image_path=first.path,
+        mid_frame = frames[len(frames) // 2]
+        sign[mid_frame.frame_id] = DetectionRecord(
+            frame_id=mid_frame.frame_id,
+            image_path=mid_frame.path,
             sha256="0" * 16,
             type="sign",
             transform=Transform(
@@ -114,7 +153,7 @@ def _build(tmp_path: Path, gray: np.ndarray, sign_cls: str | None):
             ),
             instances=[
                 BoxInstance(
-                    id=f"{first.frame_id}#sign#0",
+                    id=f"{mid_frame.frame_id}#sign#0",
                     bbox=(10.0, 20.0, 60.0, 80.0),
                     conf=0.91,
                     cls=sign_cls,
@@ -139,13 +178,17 @@ def test_single_line_reports_no_double_line(tmp_path: Path):
 
 
 def test_sign_is_recorded_with_distance_along_route(tmp_path: Path):
-    results = analyse_marking(
-        *_build(tmp_path, _single_line_image(), "Bend"), image_root=tmp_path
-    )
-    signs = [s for r in results for s in r.signs]
+    route, segments, detections, cfg = _build(tmp_path, _single_line_image(), "Bend")
+    results = analyse_marking(route, segments, detections, cfg, image_root=tmp_path)
+
+    signs = [sign for result in results for sign in result.signs]
     assert len(signs) == 1
-    assert signs[0].cls == "Bend"
-    assert signs[0].at_m >= 0.0
+
+    # The sign sits on a mid-route frame, so a zero here would mean the distance
+    # lookup silently fell through to its default rather than reading frame_dist_m.
+    expected = float(route.frame_dist_m[len(route.frames) // 2])
+    assert expected > 0.0
+    assert signs[0].at_m == pytest.approx(expected, rel=1e-6)
 
 
 def test_module_returns_existence_results_not_flags(tmp_path: Path):
