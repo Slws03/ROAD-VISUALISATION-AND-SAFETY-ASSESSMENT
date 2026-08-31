@@ -43,6 +43,16 @@ uv sync --extra runners
 uv run irap detect-signs --route DIR --weights path/to/best.pt
 ```
 
+`scripts/run_detectors.ps1` wraps both detectors and the report in one command:
+
+```powershell
+.\scriptsun_detectors.ps1 -Route D:outes\kuching_01 -Report
+```
+
+It refuses to run without a CLRerNet dump unless `-SkipLanes` is passed, because
+a route with no `lane.jsonl` is not an error downstream -- it reads as a road
+with no markings anywhere and grades critical throughout.
+
 CPU inference is adequate for screening-rate imagery. The runner refuses to run
 against a weight whose class names are not exactly the five the decision layer
 matches on -- a drifted name would flow through every layer cleanly and then
