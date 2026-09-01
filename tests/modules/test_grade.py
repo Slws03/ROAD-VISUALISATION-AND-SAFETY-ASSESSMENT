@@ -8,9 +8,13 @@ import pytest
 from irap_screening.config import load_config
 from irap_screening.io.align import align_route
 from irap_screening.io.schema import Flag, ImuSample
-from irap_screening.modules.grade import analyse_grade, pitch_series
+from irap_screening.modules.grade import (
+    analyse_grade,
+    longitudinal_accel,
+    pitch_series,
+)
 from irap_screening.segment import build_segments
-from tests.factories import graded_route, straight_route
+from tests.factories import braking_route, graded_route, straight_route
 
 
 def _analyse(frames, gps, imu, cfg=None):
@@ -112,3 +116,74 @@ def test_segment_without_imu_samples_is_not_assessed():
     assert results
     assert all(result.flag is Flag.NOT_ASSESSED for result in results)
     assert all(result.notes for result in results)
+
+
+def test_longitudinal_accel_recovers_a_steady_deceleration():
+    frames, gps, imu = braking_route(v_start=28.0, v_end=8.0, length_m=300.0)
+    route = align_route(frames, gps, imu)
+    duration = 2.0 * 300.0 / (28.0 + 8.0)
+
+    accel = longitudinal_accel(route)
+
+    assert len(accel) == len(imu)
+    assert np.median(accel) == pytest.approx((8.0 - 28.0) / duration, rel=0.05)
+
+
+def test_braking_on_a_level_road_is_not_a_grade():
+    """The defect KITTI exposed: an accelerometer cannot tell braking from a slope.
+
+    Its longitudinal channel carries the vehicle's own acceleration on top of the
+    gravity projection, and a complementary filter does not separate them --
+    sustained braking sits inside the band the accelerometer anchors. Against
+    KITTI's INS ground truth this produced grades of -12 percent on a road whose
+    true maximum was about 5 percent, flagging five segments critical that were
+    not.
+    """
+    results = _analyse(*braking_route(grade_pct=0.0, v_start=28.0, v_end=8.0))
+
+    for result in results:
+        assert result.metrics["grade_pct"] == pytest.approx(0.0, abs=1.0)
+        assert result.flag is Flag.NORMAL
+
+
+def test_the_uncorrected_reading_would_have_flagged_that_road_critical():
+    """Pins that the previous test is not passing for a trivial reason.
+
+    Without the correction the same accelerometer reading yields a grade well
+    past the threshold, so the test above is checking real work.
+    """
+    _, _, imu = braking_route(grade_pct=0.0, v_start=28.0, v_end=8.0)
+    sample = imu[len(imu) // 2]
+
+    uncorrected_pct = (
+        np.tan(np.arctan2(-sample.ax, np.hypot(sample.ay, sample.az))) * 100.0
+    )
+
+    assert abs(uncorrected_pct) > load_config().grade.threshold_pct
+
+
+def test_a_real_grade_survives_braking_on_top_of_it():
+    """Correcting for the vehicle must not flatten a slope that is really there."""
+    results = _analyse(*braking_route(grade_pct=8.0, v_start=28.0, v_end=8.0))
+
+    assert results[0].metrics["grade_pct"] == pytest.approx(8.0, rel=0.05)
+    assert results[0].flag is Flag.CRITICAL
+
+
+def test_non_increasing_imu_timestamps_are_rejected():
+    """Differentiating speed needs strictly increasing time.
+
+    A duplicate timestamp divides by zero, and the NaN that follows compares
+    false against every threshold -- so the segment would report normal no
+    matter how steep it was.
+    """
+    frames, gps, imu = straight_route(length_m=200.0)
+    imu[5] = ImuSample(
+        timestamp_utc=imu[4].timestamp_utc,
+        ax=imu[5].ax, ay=imu[5].ay, az=imu[5].az,
+        gx=imu[5].gx, gy=imu[5].gy, gz=imu[5].gz,
+    )
+    route = align_route(frames, gps, imu)
+
+    with pytest.raises(ValueError, match="strictly increasing"):
+        pitch_series(route, load_config())

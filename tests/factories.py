@@ -203,3 +203,70 @@ def graded_route(
         for i in range(int(duration_s) + 1)
     ]
     return frames, gps, imu
+
+
+def braking_route(
+    grade_pct: float = 0.0,
+    v_start: float = 28.0,
+    v_end: float = 8.0,
+    length_m: float = 300.0,
+    imu_hz: float = 50.0,
+) -> tuple[list[Frame], list[GpsFix], list[ImuSample]]:
+    """A constant-grade road driven with a steady deceleration.
+
+    An accelerometer measures specific force, so its longitudinal channel carries
+    the vehicle's own acceleration on top of the gravity projection. On a level
+    road the two are indistinguishable from the accelerometer alone: braking
+    reads exactly like a downgrade. This factory produces that confusion
+    deliberately.
+    """
+    pitch_rad = math.atan(grade_pct / 100.0)
+    duration_s = 2.0 * length_m / (v_start + v_end)
+    accel = (v_end - v_start) / duration_s
+    lat0, lon0 = 1.55, 110.35
+
+    def speed_at(t: float) -> float:
+        return v_start + accel * t
+
+    def distance_at(t: float) -> float:
+        return v_start * t + 0.5 * accel * t * t
+
+    gps: list[GpsFix] = []
+    for i in range(math.ceil(duration_s) + 1):
+        t = min(float(i), duration_s)
+        lat, lon = _offset_latlon(lat0, lon0, north_m=distance_at(t), east_m=0.0)
+        gps.append(
+            GpsFix(
+                timestamp_utc=T0 + timedelta(seconds=t),
+                lat=lat,
+                lon=lon,
+                speed_mps=speed_at(t),
+                altitude=distance_at(t) * math.sin(pitch_rad),
+            )
+        )
+
+    imu: list[ImuSample] = []
+    for i in range(int(duration_s * imu_hz) + 1):
+        t = i / imu_hz
+        imu.append(
+            ImuSample(
+                timestamp_utc=T0 + timedelta(seconds=t),
+                # Gravity projection plus the vehicle's own longitudinal
+                # acceleration, which is what the sensor actually reports.
+                ax=-9.81 * math.sin(pitch_rad) + accel,
+                ay=0.0,
+                az=9.81 * math.cos(pitch_rad),
+                gx=0.0, gy=0.0, gz=0.0,
+            )
+        )
+
+    frames = [
+        Frame(
+            frame_id=f"f_{i:06d}",
+            path=f"frames/f_{i:06d}.jpg",
+            timestamp_utc=T0 + timedelta(seconds=i),
+            sha256=f"{i:016x}",
+        )
+        for i in range(int(duration_s) + 1)
+    ]
+    return frames, gps, imu

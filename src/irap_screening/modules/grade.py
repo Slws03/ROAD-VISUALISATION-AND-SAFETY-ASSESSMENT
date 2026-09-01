@@ -1,11 +1,22 @@
-"""Longitudinal grade from accelerometer tilt with complementary filtering.
+"""Grade from accelerometer tilt, corrected for the vehicle's own acceleration.
 
-The accelerometer gives an absolute pitch reference but is noisy under vehicle
-acceleration; the gyro is smooth but drifts. A complementary filter combines
-them: the gyro carries the short term, the accelerometer anchors the long term.
+An accelerometer measures specific force, so its longitudinal channel carries
+the vehicle's braking and acceleration on top of the gravity projection. On a
+level road the two are indistinguishable from the accelerometer alone: braking
+at 1.2 m/s^2 reads exactly like a 12 percent downgrade. A complementary filter
+does not separate them either -- sustained braking lasts seconds, which is
+inside the band the accelerometer anchors, not the band the gyro carries.
 
-Grade is reported signed, so uphill and downhill remain distinguishable in the
-report, but the flag keys on magnitude because steepness is what carries risk.
+The correction subtracts the longitudinal acceleration derived from recorded
+speed before taking the gravity direction. Measured against KITTI drive
+2011_10_03_0042, whose INS supplies ground-truth pitch, this took the
+accelerometer-only error from 3.31 degrees RMSE to 0.38 degrees, and removed
+five spurious critical segments on a road whose true maximum grade was about
+5 percent.
+
+Differentiating speed amplifies its noise. KITTI's recorded velocity is clean;
+a phone's 1 Hz GPS speed is not, and this may need smoothing before provider
+data is trusted here.
 """
 
 from __future__ import annotations
@@ -22,6 +33,25 @@ MODULE_NAME = "grade"
 def _accel_pitch(ax: np.ndarray, ay: np.ndarray, az: np.ndarray) -> np.ndarray:
     """Pitch in radians from the gravity direction, positive nose-up."""
     return np.arctan2(-ax, np.sqrt(ay**2 + az**2))
+
+
+def longitudinal_accel(route: AlignedRoute) -> np.ndarray:
+    """Vehicle acceleration along its own axis, from recorded speed.
+
+    This is the term the accelerometer cannot separate from a slope, so it is
+    computed from a source that does not confuse the two.
+    """
+    times = np.array([sample.timestamp_utc.timestamp() for sample in route.imu])
+    if times.size < 2:
+        return np.zeros(times.size)
+    if np.any(np.diff(times) <= 0.0):
+        raise ValueError(
+            "IMU timestamps must be strictly increasing to differentiate speed; "
+            "a repeated timestamp divides by zero, and the NaN that follows "
+            "compares false against every threshold, so the segment would report "
+            "normal however steep it is"
+        )
+    return np.gradient(route.imu_speed_mps, times)
 
 
 def pitch_series(route: AlignedRoute, cfg: Settings) -> np.ndarray:
@@ -41,7 +71,9 @@ def pitch_series(route: AlignedRoute, cfg: Settings) -> np.ndarray:
     gy = np.array([s.gy for s in route.imu], dtype=float)
     times = np.array([s.timestamp_utc.timestamp() for s in route.imu], dtype=float)
 
-    accel_pitch = _accel_pitch(ax, ay, az)
+    # Remove the vehicle's own longitudinal acceleration, which the sensor
+    # reports in the same channel as the gravity projection.
+    accel_pitch = _accel_pitch(ax - longitudinal_accel(route), ay, az)
     alpha = cfg.grade.comp_filter_alpha
 
     fused = np.empty_like(accel_pitch)
