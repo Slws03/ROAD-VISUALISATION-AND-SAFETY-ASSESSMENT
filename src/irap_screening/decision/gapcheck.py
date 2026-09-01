@@ -42,6 +42,39 @@ def _raise_priority(current: str) -> str:
     return _PRIORITY_LADDER[min(index + 1, len(_PRIORITY_LADDER) - 1)]
 
 
+def curve_spans(
+    segments: list[Segment], module_results: dict[str, list[ModuleResult]]
+) -> dict[str, tuple[float, float]]:
+    """Map each critical-curvature segment to the extent of the curve it belongs to.
+
+    The 100 m grid is iRAP's reporting unit, so a 300 m bend necessarily spans
+    three of them, and each of those units genuinely carries a critical
+    curvature attribute. Signage adequacy is not a property of the unit though:
+    a bend is warned of once, at its entry. Reading each unit as its own curve
+    demanded one advance sign per unit, at a different upstream point each time,
+    which no real installation would satisfy.
+
+    A run is broken by any segment that is not critical, including one that was
+    never assessed -- continuity cannot be claimed across a unit whose curvature
+    is unknown.
+    """
+    flags = [_flag_of(module_results, "curvature", s.segment_id) for s in segments]
+    spans: dict[str, tuple[float, float]] = {}
+    start = 0
+    while start < len(segments):
+        if flags[start] is not Flag.CRITICAL:
+            start += 1
+            continue
+        end = start
+        while end + 1 < len(segments) and flags[end + 1] is Flag.CRITICAL:
+            end += 1
+        extent = (segments[start].start_m, segments[end].end_m)
+        for segment in segments[start : end + 1]:
+            spans[segment.segment_id] = extent
+        start = end + 1
+    return spans
+
+
 def _by_segment(results: list[ModuleResult]) -> dict[str, ModuleResult]:
     return {result.segment_id: result for result in results}
 
@@ -71,6 +104,7 @@ def run_gapcheck(
     all_signs: list[SignRecord] = [sign for entry in existence for sign in entry.signs]
 
     recommendations: dict[str, list[Recommendation]] = {s.segment_id: [] for s in segments}
+    spans = curve_spans(segments, module_results)
 
     for segment in segments:
         curvature_flag = _flag_of(module_results, "curvature", segment.segment_id)
@@ -81,7 +115,10 @@ def run_gapcheck(
         # Rule 1: a critical curve needs an advance warning sign AND chevrons.
         # not_assessed is skipped explicitly: it means unevaluated, not safe.
         if curvature_flag is Flag.CRITICAL:
-            window_centre = segment.start_m - cfg.gapcheck.curve_sign_distance_m
+            curve_start, curve_end = spans[segment.segment_id]
+            # Measured from the curve's entry, not this unit's start: consecutive
+            # critical units are one bend, and one sign warns of all of them.
+            window_centre = curve_start - cfg.gapcheck.curve_sign_distance_m
             tolerance = cfg.gapcheck.curve_sign_tolerance_m
             advance_present = any(
                 sign.cls in ADVANCE_BEND_CLASSES
@@ -114,7 +151,12 @@ def run_gapcheck(
                 recommendations[segment.segment_id].append(
                     Recommendation(
                         rule="curve_warning_incomplete",
-                        trigger={"module": "curvature", "radius_m": radius or 0.0},
+                        trigger={
+                            "module": "curvature",
+                            "radius_m": radius or 0.0,
+                            "curve_start_m": curve_start,
+                            "curve_end_m": curve_end,
+                        },
                         missing=missing,
                         present=present,
                         priority="high",
