@@ -27,7 +27,14 @@ curvature:
 
 grade:
   threshold_pct: 7.5             # iRAP Grade Risk Factor boundary (provisional)
-  comp_filter_alpha: 0.98        # complementary filter: gyro weight
+  comp_filter_alpha: 0.98        # complementary filter: gyro weight.
+                                 # PROVISIONAL and measurably poor: against
+                                 # KITTI 0042's INS pitch, 0.98 gives 1.05 deg
+                                 # RMSE where 0.5-0.8 give 0.30-0.32. This
+                                 # module's gyro branch has no bias correction
+                                 # (curvature's does), so a heavy gyro weight
+                                 # lets drift accumulate. Left unchanged: one
+                                 # drive is no basis for retuning a default.
 
 lane:
   clrernet_conf: 0.41            # CLRerNet official default
