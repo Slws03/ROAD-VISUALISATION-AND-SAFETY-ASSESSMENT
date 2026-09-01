@@ -13,6 +13,7 @@ venv/
 # leading slash: a bare view/ would also swallow src/irap_screening/view/.
 /out/
 /view/
+/routes/
 
 # Data & model artifacts
 dataset/
