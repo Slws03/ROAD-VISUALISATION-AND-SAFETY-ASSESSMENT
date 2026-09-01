@@ -1,0 +1,69 @@
+{
+  "_comment": "Synthetic signage for KITTI 2011_10_03_drive_0042. The advance bend sign sits at 1870 m, which is 230 m before the curve entry at 2100 m (JKR placement, checked by gap-check with a 50 m tolerance). Chevrons run through segments 21-24, the sustained left-hand curve.",
+  "signs": {
+    "bend": {
+      "image": "../assets/signs/bend.png",
+      "mask": "diamond"
+    },
+    "chevron": {
+      "image": "../assets/signs/chevron.png",
+      "mask": "none"
+    }
+  },
+  "placements": [
+    {
+      "sign": "bend",
+      "_where": "approaching 1870 m; grows as the vehicle closes on it",
+      "frames": [
+        765,
+        770,
+        775,
+        780,
+        785
+      ],
+      "start": {
+        "x": 1100,
+        "y": 194,
+        "h": 20
+      },
+      "end": {
+        "x": 1182,
+        "y": 180,
+        "h": 64
+      }
+    },
+    {
+      "sign": "chevron",
+      "_where": "outside of the curve, roughly every 17 m through segments 21-24",
+      "frames": [
+        875,
+        890,
+        905,
+        920,
+        935,
+        950,
+        965,
+        980,
+        995,
+        1010,
+        1025,
+        1040,
+        1055,
+        1070,
+        1085,
+        1100,
+        1115
+      ],
+      "start": {
+        "x": 1000,
+        "y": 200,
+        "h": 70
+      },
+      "end": {
+        "x": 1000,
+        "y": 200,
+        "h": 70
+      }
+    }
+  ]
+}
