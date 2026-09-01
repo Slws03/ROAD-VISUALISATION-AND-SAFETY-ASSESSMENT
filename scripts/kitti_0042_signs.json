@@ -1,5 +1,5 @@
 {
-  "_comment": "Synthetic signage for KITTI 2011_10_03_drive_0042. The advance bend sign sits at 1870 m, which is 230 m before the curve entry at 2100 m (JKR placement, checked by gap-check with a 50 m tolerance). Chevrons run through segments 21-24, the sustained left-hand curve.",
+  "_comment": "Synthetic signage for KITTI 2011_10_03_drive_0042 at 1 Hz sampling. Frame ids are sequential; source_frame in frames.csv maps back to the KITTI index. The advance bend sign spans 1830-1878 m, inside the 1870 m +-50 window gap-check uses for the curve entering at 2100 m (JKR 230 m placement). Chevrons run through segments 21-24, the sustained left-hand curve.",
   "signs": {
     "bend": {
       "image": "../assets/signs/bend.png",
@@ -13,46 +13,52 @@
   "placements": [
     {
       "sign": "bend",
-      "_where": "approaching 1870 m; grows as the vehicle closes on it",
+      "_where": "approached between 1830 and 1878 m; grows as the vehicle closes",
       "frames": [
-        765,
-        770,
-        775,
-        780,
-        785
+        75,
+        76,
+        77
       ],
       "start": {
-        "x": 1100,
+        "x": 1095,
         "y": 194,
-        "h": 20
+        "h": 22
       },
       "end": {
-        "x": 1182,
-        "y": 180,
-        "h": 64
+        "x": 1195,
+        "y": 178,
+        "h": 76
       }
     },
     {
       "sign": "chevron",
-      "_where": "outside of the curve, roughly every 17 m through segments 21-24",
+      "_where": "outside of the curve, one per frame (about 22 m apart) in segments 21-24",
       "frames": [
-        875,
-        890,
-        905,
-        920,
-        935,
-        950,
-        965,
-        980,
-        995,
-        1010,
-        1025,
-        1040,
-        1055,
-        1070,
-        1085,
-        1100,
-        1115
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112
       ],
       "start": {
         "x": 1000,

@@ -137,15 +137,17 @@ def rewrite_digests(route: Path) -> None:
     """
     path = route / "frames.csv"
     with path.open(newline="", encoding="utf-8") as handle:
-        rows = list(csv.DictReader(handle))
+        reader = csv.DictReader(handle)
+        # Keep whatever columns the manifest carries; converters may add
+        # provenance ones this script has no business dropping.
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
     for row in rows:
         row["sha256"] = hashlib.sha256(
             (route / row["path"]).read_bytes()
         ).hexdigest()[:16]
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(
-            handle, fieldnames=["frame_id", "path", "timestamp_utc", "sha256"]
-        )
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 

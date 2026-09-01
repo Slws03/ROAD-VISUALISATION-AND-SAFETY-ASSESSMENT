@@ -11,12 +11,15 @@ Only the frames are subsampled. GPS and IMU keep every oxts row: alignment runs
 on its own time axis, and thinning it would only coarsen the curvature and grade
 windows for no benefit.
 
-Frame ids keep the original KITTI index (f_000766 is 0000000766.png), so a frame
-picked out of the drive stays findable in the source data.
+KITTI is continuous 10 Hz video. The default keeps every tenth frame, giving
+roughly 1 Hz -- about 20 m of ground between frames at highway speed, which is
+what sampling.target_spacing_m assumes. Frames are renumbered sequentially from
+zero; the original KITTI index is kept in a source_frame column so a frame can
+still be found in the drive it came from.
 
 Usage:
     uv run python scripts/kitti_to_route.py \
-        --drive "D:/.../2011_10_03_drive_0042_sync" --out routes/kitti_0042 --every 5
+        --drive "D:/.../2011_10_03_drive_0042_sync" --out routes/kitti_0042
 """
 
 from __future__ import annotations
@@ -109,19 +112,25 @@ def write_frames(drive: Path, out: Path, camera: str, every: int, quality: int) 
     written = 0
     with (out / "frames.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["frame_id", "path", "timestamp_utc", "sha256"])
+        # source_frame is extra provenance; the route reader ignores unknown
+        # columns, so it costs nothing downstream.
+        writer.writerow(["frame_id", "path", "timestamp_utc", "sha256", "source_frame"])
         for index in range(0, len(images), every):
             image = cv2.imread(str(images[index]))
             if image is None:
                 raise SystemExit(f"could not read {images[index]}")
-            # The frame id carries the original KITTI index so a frame chosen
-            # here can be found again in the source drive.
-            frame_id = f"f_{index:06d}"
+            frame_id = f"f_{written:06d}"
             target = frames_dir / f"{frame_id}.jpg"
             cv2.imwrite(str(target), image, [cv2.IMWRITE_JPEG_QUALITY, quality])
             digest = hashlib.sha256(target.read_bytes()).hexdigest()[:16]
             writer.writerow(
-                [frame_id, f"frames/{frame_id}.jpg", times[index].isoformat(), digest]
+                [
+                    frame_id,
+                    f"frames/{frame_id}.jpg",
+                    times[index].isoformat(),
+                    digest,
+                    index,
+                ]
             )
             written += 1
     return written
@@ -132,7 +141,10 @@ def main() -> None:
     parser.add_argument("--drive", required=True, type=Path, help="KITTI *_sync directory")
     parser.add_argument("--out", required=True, type=Path, help="route directory to write")
     parser.add_argument("--camera", default="image_02", help="camera stream (default: left colour)")
-    parser.add_argument("--every", type=int, default=5, help="keep every Nth frame")
+    parser.add_argument(
+        "--every", type=int, default=10,
+        help="keep every Nth frame; KITTI is 10 Hz, so 10 gives about 1 Hz",
+    )
     parser.add_argument("--quality", type=int, default=90, help="JPEG quality")
     args = parser.parse_args()
 
