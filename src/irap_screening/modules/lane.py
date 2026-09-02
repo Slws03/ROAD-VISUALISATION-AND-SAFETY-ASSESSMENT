@@ -101,8 +101,10 @@ def analyse_lane(
             )
             lanes = [lane for lane in lanes if lane.conf >= cfg.lane.clrernet_conf]
             if not lanes:
-                # No marking detected is the worst observable state, not a gap.
-                contrasts.append(0.0)
+                # A frame the detector could not resolve is not evidence that the
+                # road is unmarked. Scoring it as zero contrast and aggregating by
+                # the worst frame let one miss condemn a whole segment; sparse
+                # detection is handled once, per segment, below.
                 continue
 
             detected_frames += 1
@@ -123,18 +125,51 @@ def analyse_lane(
                     if value is not None
                 ]
                 if samples:
-                    contrasts.append(float(np.median(samples)))
+                    # A high percentile, not the median: see contrast_percentile
+                    # in the configuration for why a dashed marking demands it.
+                    contrasts.append(
+                        float(np.percentile(samples, cfg.lane.contrast_percentile))
+                    )
                     evidence.append(lane.id)
 
         total_frames = len(segment.frame_ids)
+        detection_rate = detected_frames / total_frames if total_frames else 0.0
+        if contrasts and detection_rate < cfg.lane.min_detection_rate:
+            results.append(
+                ModuleResult(
+                    module=MODULE_NAME,
+                    segment_id=segment.segment_id,
+                    flag=Flag.NOT_ASSESSED,
+                    metrics={
+                        "detection_rate": detection_rate,
+                        "detected_frames": float(detected_frames),
+                        "total_frames": float(total_frames),
+                    },
+                    notes=(
+                        f"Lane detection rate {detection_rate:.0%} is below the "
+                        f"{cfg.lane.min_detection_rate:.0%} floor; too little evidence "
+                        "to grade this segment either way."
+                    ),
+                    evidence=evidence,
+                )
+            )
+            continue
         if not contrasts:
             results.append(
                 ModuleResult(
                     module=MODULE_NAME,
                     segment_id=segment.segment_id,
                     flag=Flag.NOT_ASSESSED,
-                    metrics={"total_frames": float(total_frames)},
-                    notes="No usable imagery for this segment.",
+                    metrics={
+                        "detection_rate": detection_rate,
+                        "detected_frames": float(detected_frames),
+                        "total_frames": float(total_frames),
+                    },
+                    notes=(
+                        "No lane was detected anywhere in this segment. That is "
+                        "not the same as the road being unmarked, and CLRerNet's "
+                        "output cannot tell the two apart."
+                    ),
                 )
             )
             continue
@@ -147,7 +182,7 @@ def analyse_lane(
                 flag=_grade(worst_contrast, cfg),
                 metrics={
                     "weber_contrast": worst_contrast,
-                    "detection_rate": detected_frames / total_frames,
+                    "detection_rate": detection_rate,
                     "detected_frames": float(detected_frames),
                     "total_frames": float(total_frames),
                 },

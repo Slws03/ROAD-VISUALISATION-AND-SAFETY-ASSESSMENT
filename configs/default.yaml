@@ -38,6 +38,19 @@ grade:
 
 lane:
   clrernet_conf: 0.41            # CLRerNet official default
+  contrast_percentile: 85        # PROVISIONAL. Summarises a lane by a high
+                                 # percentile of its samples, not the median.
+                                 # CLRerNet returns points along the line's path,
+                                 # so a dashed marking is sampled through its
+                                 # gaps: over half the points measure asphalt and
+                                 # the median reports a healthy line as invisible.
+                                 # A uniformly worn line is faint at every point,
+                                 # so a high percentile stays faint.
+  min_detection_rate: 0.5        # PROVISIONAL. Below this share of frames
+                                 # carrying an accepted lane, the segment is
+                                 # not_assessed: too little evidence to grade the
+                                 # road, and a detector limitation must not be
+                                 # reported as a road defect.
   weber_watch: 0.35              # provisional contrast band boundary
   weber_urgent: 0.20             # provisional contrast band boundary
   bg_window: 81                  # background window for contrast sampling
