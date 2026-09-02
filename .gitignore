@@ -14,6 +14,9 @@ venv/
 /out/
 /view/
 /routes/
+# report and viewer output now defaults beside the route it describes
+fixtures/*/out/
+fixtures/*/view/
 
 # Data & model artifacts
 dataset/

@@ -30,14 +30,18 @@ def _main() -> None:
 
 
 RouteOption = typer.Option(..., "--route", help="Route directory to analyse.")
-OutOption = typer.Option(Path("out"), "--out", help="Output directory.")
+OutOption = typer.Option(
+    None, "--out", help="Output directory. Default: an out/ inside the route."
+)
 SetOption = typer.Option(None, "--set", help="Override a threshold, as key=value.")
 ProfileOption = typer.Option(None, "--config", help="Profile YAML overriding defaults.")
 RouteIdOption = typer.Option("R01", "--route-id", help="Identifier used in segment ids.")
 WeightsOption = typer.Option(..., "--weights", help="Path to the YOLO sign weight (.pt).")
 DeviceOption = typer.Option("cpu", "--device", help="Inference device, e.g. cpu or 0.")
 RawOption = typer.Option(..., "--raw", help="CLRerNet dump written by the Colab cell.")
-ViewOutOption = typer.Option(Path("view"), "--out", help="Viewer output directory.")
+ViewOutOption = typer.Option(
+    None, "--out", help="Viewer output directory. Default: a view/ inside the route."
+)
 PortOption = typer.Option(8000, "--port", help="Port for the local viewer server.")
 NoServeOption = typer.Option(False, "--no-serve", help="Build the viewer, do not serve it.")
 NoOpenOption = typer.Option(False, "--no-open", help="Serve without opening a browser.")
@@ -54,13 +58,16 @@ def _require_route(route: Path) -> Path:
 @app.command(name="report")
 def report(
     route: Path = RouteOption,
-    out: Path = OutOption,
+    out: Path | None = OutOption,
     config: Path | None = ProfileOption,
     set_: list[str] | None = SetOption,
     route_id: str = RouteIdOption,
 ) -> None:
     """Run the full CPU layer and write report.json, segments.geojson and report.md."""
     route = _require_route(route)
+    # Default beside the data it describes: a fixed directory meant every route
+    # wrote to the same place and the last run replaced the rest.
+    out = out or route / "out"
     cfg = load_config(profile=config, overrides=set_)
     result = run_pipeline(route, cfg, route_id=route_id)
     write_report(out, result)
@@ -119,7 +126,7 @@ def import_lanes(
 @app.command(name="view")
 def view(
     route: Path = RouteOption,
-    out: Path = ViewOutOption,
+    out: Path | None = ViewOutOption,
     config: Path | None = ProfileOption,
     set_: list[str] | None = SetOption,
     route_id: str = RouteIdOption,
@@ -138,6 +145,7 @@ def view(
     from irap_screening.view.serve import serve_directory
 
     route = _require_route(route)
+    out = out or route / "view"
     cfg = load_config(profile=config, overrides=set_)
     out_dir = export_view(route, cfg, out, route_id=route_id)
     typer.echo(f"Built {out_dir}")

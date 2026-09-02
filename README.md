@@ -16,7 +16,7 @@ rather than re-running inference.
 
 ```bash
 uv sync --extra dev
-uv run irap report --route fixtures/route_demo --out out
+uv run irap report --route fixtures/route_demo
 ```
 
 This runs the full decision layer against the committed fixture. No GPU, no
@@ -26,7 +26,7 @@ external data.
 
 | Command | Purpose |
 | --- | --- |
-| `irap report --route DIR --out DIR` | Full CPU layer; writes JSON, GeoJSON and Markdown |
+| `irap report --route DIR` | Full CPU layer; writes JSON, GeoJSON and Markdown into `DIR/out` |
 | `irap detect-signs --route DIR --weights W.pt` | Runs the YOLO sign detector; writes `detections/sign.jsonl` |
 | `irap import-lanes --route DIR --raw dump.json` | Converts a CLRerNet dump; writes `detections/lane.jsonl` |
 | `irap view --route DIR` | Builds and serves a local page for inspecting the results |
@@ -96,6 +96,10 @@ All thresholds live in `configs/default.yaml`. Override one inline:
 ```bash
 uv run irap report --route fixtures/route_demo --set curvature.threshold_m=350
 ```
+
+Output defaults beside the data it describes -- `DIR/out` for the report,
+`DIR/view` for the viewer -- so two routes cannot overwrite each other. Pass
+`--out` to put it elsewhere.
 
 ## Modules
 

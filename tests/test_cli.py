@@ -90,3 +90,46 @@ def test_view_builds_without_serving(tmp_path: Path):
     assert (out / "index.html").exists()
     assert (out / "data.json").exists()
     assert list((out / "evidence").glob("*.jpg"))
+
+
+def test_report_defaults_to_an_out_inside_the_route(tmp_path: Path):
+    """Two routes must not write over each other's report by default.
+
+    A fixed default meant every route's report landed in the same directory and
+    the last run silently replaced the rest.
+    """
+    route = tmp_path / "route"
+    route.mkdir()
+    _write_route(route)
+
+    result = runner.invoke(app, ["report", "--route", str(route)])
+
+    assert result.exit_code == 0, result.output
+    assert (route / "out" / "report.json").exists()
+    assert not (Path("out") / "report.json").resolve().is_relative_to(tmp_path)
+
+
+def test_view_defaults_to_a_view_inside_the_route(tmp_path: Path):
+    route = tmp_path / "route"
+    route.mkdir()
+    _write_route(route)
+
+    result = runner.invoke(app, ["view", "--route", str(route), "--no-serve"])
+
+    assert result.exit_code == 0, result.output
+    assert (route / "view" / "index.html").exists()
+
+
+def test_an_explicit_out_still_wins(tmp_path: Path):
+    route = tmp_path / "route"
+    route.mkdir()
+    _write_route(route)
+    elsewhere = tmp_path / "elsewhere"
+
+    result = runner.invoke(
+        app, ["report", "--route", str(route), "--out", str(elsewhere)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (elsewhere / "report.json").exists()
+    assert not (route / "out").exists()
