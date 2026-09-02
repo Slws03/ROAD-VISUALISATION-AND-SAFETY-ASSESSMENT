@@ -30,6 +30,10 @@
 .PARAMETER SkipSigns
     Run the lane import only.
 
+.PARAMETER Out
+    Report output directory. Defaults to an out/ inside the route, so a report
+    always sits with the data it describes and two routes cannot collide.
+
 .PARAMETER Report
     Also run `irap report` afterwards. Needs gps.csv and imu.csv in the route.
 
@@ -49,7 +53,7 @@ param(
 
     [string] $Weights = "G:\My Drive\FYP_runs\yolo11m_5class_v1\weights\best.pt",
 
-    [string] $Out = "out",
+    [string] $Out = "",
 
     [switch] $SkipLanes,
     [switch] $SkipSigns,
@@ -88,6 +92,10 @@ $Route = (Resolve-Path $Route).Path
 if (-not (Test-Path (Join-Path $Route 'frames.csv'))) {
     throw "No frames.csv in $Route - the runners key every detection by its frame_id"
 }
+
+# Keep the report with the route it describes. A fixed default wrote every
+# route's report to the same place, so the last run overwrote the rest.
+if (-not $Out) { $Out = Join-Path $Route 'out' }
 
 if (-not $Raw) { $Raw = Join-Path $Route 'clrernet_raw.json' }
 

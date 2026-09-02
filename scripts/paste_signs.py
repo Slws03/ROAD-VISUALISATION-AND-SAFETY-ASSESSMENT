@@ -164,11 +164,13 @@ def main() -> None:
     if args.out.exists():
         shutil.rmtree(args.out)
     shutil.copytree(args.route, args.out)
-    # Detections describe the original imagery, so they cannot carry over.
-    detections = args.out / "detections"
-    if detections.exists():
-        shutil.rmtree(detections)
-    detections.mkdir()
+    # Detections and reports describe the source imagery. Copying them into the
+    # edited route would leave stale files that look like this route's own.
+    for stale in ("detections", "out", "view"):
+        path = args.out / stale
+        if path.exists():
+            shutil.rmtree(path)
+    (args.out / "detections").mkdir()
 
     touched = apply_spec(args.out, spec, args.spec.parent)
     rewrite_digests(args.out)
