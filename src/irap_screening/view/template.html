@@ -251,6 +251,7 @@ function drawLanes(svg, record, width, height) {
       polyline.setAttribute("fill", "none");
       polyline.setAttribute("stroke", LANE_COLOR);
       polyline.setAttribute("stroke-width", 3);
+      polyline.setAttribute("vector-effect", "non-scaling-stroke");
       svg.appendChild(polyline);
     }
   }
@@ -258,24 +259,30 @@ function drawLanes(svg, record, width, height) {
 
 // The class string is what gap-check matches on, so it is shown with the
 // confidence that decided whether it was accepted at all.
-function drawSigns(svg, record) {
+function drawSigns(svg, record, width) {
+  const fontSize = Math.max(12, width / 64);
   for (const instance of record.instances) {
     const [x1, y1, x2, y2] = instance.bbox;
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    const w = Math.abs(x2 - x1);
+    const h = Math.abs(y2 - y1);
     const rect = document.createElementNS(SVG_NS, "rect");
-    rect.setAttribute("x", x1);
-    rect.setAttribute("y", y1);
-    rect.setAttribute("width", x2 - x1);
-    rect.setAttribute("height", y2 - y1);
+    rect.setAttribute("x", x);
+    rect.setAttribute("y", y);
+    rect.setAttribute("width", w);
+    rect.setAttribute("height", h);
     rect.setAttribute("fill", "none");
     rect.setAttribute("stroke", SIGN_COLOR);
     rect.setAttribute("stroke-width", 3);
+    rect.setAttribute("vector-effect", "non-scaling-stroke");
     svg.appendChild(rect);
 
     const label = document.createElementNS(SVG_NS, "text");
-    label.setAttribute("x", x1);
-    label.setAttribute("y", Math.max(y1 - 6, 12));
+    label.setAttribute("x", x);
+    label.setAttribute("y", Math.max(y - 6, 12));
     label.setAttribute("fill", SIGN_COLOR);
-    label.setAttribute("font-size", "20");
+    label.setAttribute("font-size", fontSize);
     label.textContent = `${instance.cls || "?"} ${instance.conf.toFixed(2)}`;
     svg.appendChild(label);
   }
@@ -287,7 +294,7 @@ function drawOverlay(svg, width, height, frameId) {
   const lane = laneByFrame.get(frameId);
   if (lane) drawLanes(svg, lane, width, height);
   const sign = signByFrame.get(frameId);
-  if (sign) drawSigns(svg, sign);
+  if (sign) drawSigns(svg, sign, width);
 }
 
 // Stepping frames swaps the image in place rather than rebuilding the panel.
