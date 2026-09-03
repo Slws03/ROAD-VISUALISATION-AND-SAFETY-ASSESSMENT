@@ -80,6 +80,8 @@ def test_import_lanes_reports_a_missing_dump(tmp_path: Path):
 
 def test_view_builds_without_serving(tmp_path: Path):
     """--no-serve must produce the directory and return, not block on a server."""
+    import json
+
     out = tmp_path / "view"
     result = runner.invoke(
         app,
@@ -89,7 +91,8 @@ def test_view_builds_without_serving(tmp_path: Path):
     assert result.exit_code == 0, result.output
     assert (out / "index.html").exists()
     assert (out / "data.json").exists()
-    assert list((out / "evidence").glob("*.jpg"))
+    data = json.loads((out / "data.json").read_text(encoding="utf-8"))
+    assert data["frames"]
 
 
 def test_report_defaults_to_an_out_inside_the_route(tmp_path: Path):

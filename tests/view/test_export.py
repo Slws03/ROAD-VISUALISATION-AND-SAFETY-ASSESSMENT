@@ -2,13 +2,12 @@
 
 The viewer's job is to let a flag be checked against pixels, so the tests care
 about the link between the two staying intact: every segment must be able to
-reach its frames, and every frame its rendered evidence.
+reach its frames, and every frame the route path the browser will fetch it
+from.
 """
 
 import json
 from pathlib import Path
-
-import cv2
 
 from irap_screening.config import load_config
 from irap_screening.view.export import TEMPLATE, export_view
@@ -22,24 +21,32 @@ def _export(tmp_path, **kwargs):
     return out
 
 
-def test_writes_the_three_pieces_the_page_needs(tmp_path):
+def test_writes_the_two_pieces_the_page_needs(tmp_path):
     out = _export(tmp_path)
 
     assert (out / "index.html").exists()
     assert (out / "data.json").exists()
-    assert (out / "evidence").is_dir()
 
 
-def test_every_frame_gets_an_evidence_image(tmp_path):
-    """A missing evidence image reads as a frame the pipeline never saw."""
+def test_no_evidence_directory_is_written(tmp_path):
+    """Rendering moved to the browser; nothing should be rasterized any more."""
+    out = _export(tmp_path)
+
+    assert not (out / "evidence").exists()
+
+
+def test_every_referenced_frame_has_a_path_the_browser_can_fetch(tmp_path):
+    """A missing map entry reads as a frame the pipeline never saw."""
     out = _export(tmp_path)
     data = json.loads((out / "data.json").read_text(encoding="utf-8"))
 
-    frame_ids = {fid for segment in data["segments"] for fid in segment["frame_ids"]}
-    rendered = {path.stem for path in (out / "evidence").glob("*.jpg")}
-
-    assert frame_ids
-    assert frame_ids == rendered
+    referenced = {fid for segment in data["segments"] for fid in segment["frame_ids"]}
+    assert referenced
+    assert referenced == set(data["frames"])
+    for frame_id in referenced:
+        path = data["frames"][frame_id]
+        assert path.startswith("frames/")
+        assert (FIXTURE / path).exists()
 
 
 def test_segments_carry_the_frame_ids_the_report_omits(tmp_path):
@@ -65,15 +72,6 @@ def test_the_report_travels_intact(tmp_path):
             assert "flag" in segment[module]
 
 
-def test_evidence_is_downscaled(tmp_path):
-    out = _export(tmp_path, target_width=320)
-
-    for path in (out / "evidence").glob("*.jpg"):
-        image = cv2.imread(str(path))
-        assert image is not None
-        assert image.shape[1] <= 320
-
-
 def test_the_page_loads_its_data_at_runtime(tmp_path):
     """Data stays a separate file so a re-run refreshes without rebuilding the page."""
     out = _export(tmp_path)
@@ -87,19 +85,9 @@ def test_a_route_without_sign_detections_still_exports(tmp_path):
     assert not (FIXTURE / "detections" / "sign.jsonl").exists()
 
     out = _export(tmp_path)
+    data = json.loads((out / "data.json").read_text(encoding="utf-8"))
 
-    assert list((out / "evidence").glob("*.jpg"))
-
-
-def test_rerunning_into_the_same_directory_leaves_no_stale_evidence(tmp_path):
-    """Stale frames from a previous route would be attributed to this one."""
-    out = tmp_path / "view"
-    (out / "evidence").mkdir(parents=True)
-    (out / "evidence" / "f_999999.jpg").write_bytes(b"stale")
-
-    export_view(FIXTURE, load_config(), out)
-
-    assert not (out / "evidence" / "f_999999.jpg").exists()
+    assert data["frames"]
 
 
 def test_coverage_uses_total_and_not_assessed(tmp_path):

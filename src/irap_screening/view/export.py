@@ -3,6 +3,10 @@
 The viewer is a verification tool, not a second analysis: it re-runs the same
 pipeline and renders the same report, adding only what the report deliberately
 leaves out -- the frames behind each segment, with their detections drawn on.
+
+Detections are drawn in the browser, on the frame at its native resolution,
+so this module's only job is to say where each frame lives. It does not read
+or write a single pixel.
 """
 
 from __future__ import annotations
@@ -12,18 +16,13 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-import cv2
-
 from irap_screening.config import Settings
 from irap_screening.io.align import align_route
-from irap_screening.io.detections import load_detection_set
 from irap_screening.io.sources.fixture import FixtureSource
 from irap_screening.pipeline import run_pipeline
 from irap_screening.segment import build_segments
-from irap_screening.view.render import EVIDENCE_WIDTH, render_evidence
 
 TEMPLATE = Path(__file__).parent / "template.html"
-JPEG_QUALITY = 85
 
 
 def export_view(
@@ -31,7 +30,6 @@ def export_view(
     cfg: Settings,
     out_dir: Path,
     route_id: str = "R01",
-    target_width: int = EVIDENCE_WIDTH,
 ) -> Path:
     """Render a route into a self-describing directory the page can serve."""
     route_dir, out_dir = Path(route_dir), Path(out_dir)
@@ -40,45 +38,25 @@ def export_view(
     source = FixtureSource(route_dir)
     route = align_route(source.frames(), source.gps(), source.imu())
     segments = build_segments(route, cfg, route_id=route_id)
-    detections = load_detection_set(route_dir / "detections")
-    frames_by_id = {frame.frame_id: frame for frame in route.frames}
 
     frame_ids_by_segment = {
         segment.segment_id: list(segment.frame_ids) for segment in segments
     }
+    referenced_ids = {fid for ids in frame_ids_by_segment.values() for fid in ids}
+    frames_by_id = {frame.frame_id: frame for frame in route.frames}
 
-    evidence_dir = out_dir / "evidence"
-    # Wipe rather than overwrite: leftovers from a previous route would be
-    # served as if they belonged to this one.
-    if evidence_dir.exists():
-        shutil.rmtree(evidence_dir)
-    evidence_dir.mkdir(parents=True)
-
-    for segment in segments:
-        for frame_id in segment.frame_ids:
-            frame = frames_by_id.get(frame_id)
-            if frame is None:
-                continue
-            image = cv2.imread(str(route_dir / frame.path))
-            if image is None:
-                continue
-            rendered = render_evidence(
-                image,
-                detections.lane.get(frame_id),
-                detections.sign.get(frame_id),
-                target_width=target_width,
-            )
-            cv2.imwrite(
-                str(evidence_dir / f"{frame_id}.jpg"),
-                rendered,
-                [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY],
-            )
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     data: dict[str, Any] = dict(report)
     data["segments"] = [
         {**segment, "frame_ids": frame_ids_by_segment.get(segment["segment_id"], [])}
         for segment in report["segments"]
     ]
+    data["frames"] = {
+        frame_id: frames_by_id[frame_id].path
+        for frame_id in referenced_ids
+        if frame_id in frames_by_id
+    }
     (out_dir / "data.json").write_text(
         json.dumps(data, indent=1, default=str), encoding="utf-8"
     )
