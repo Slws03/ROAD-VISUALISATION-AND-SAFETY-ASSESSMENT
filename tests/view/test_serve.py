@@ -53,3 +53,23 @@ def test_parent_segments_cannot_escape_the_exposed_directory():
     assert (
         _resolve_path("/../secret.txt", OUT_DIR, ROUTE_DIR) == OUT_DIR / "secret.txt"
     )
+
+
+def test_a_segment_with_an_embedded_separator_cannot_escape_route_dir():
+    """A single URL segment can smuggle a path separator (e.g. a literal
+    backslash on Windows, where os.path.dirname treats it as one), which
+    would otherwise let a crafted request walk out of frames/ even though
+    "." and ".." alone are filtered. _resolve_path receives the path after
+    percent-decoding (that happens inside this function), so the raw
+    encoded request "/frames%5C..%5C..%5Cgps.csv" arrives here already
+    decoded as a literal backslash sequence.
+    """
+    assert (
+        _resolve_path("/frames/..\\..\\gps.csv", OUT_DIR, ROUTE_DIR)
+        == ROUTE_DIR / "frames"
+    )
+
+
+def test_a_segment_with_an_embedded_separator_cannot_escape_out_dir():
+    """Same trick, but aimed at escaping out_dir entirely."""
+    assert _resolve_path("/..\\..\\secret.txt", OUT_DIR, ROUTE_DIR) == OUT_DIR

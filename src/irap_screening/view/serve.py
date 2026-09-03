@@ -14,6 +14,7 @@ straight to the route directory instead.
 
 from __future__ import annotations
 
+import os
 import urllib.parse
 import webbrowser
 from functools import partial
@@ -29,16 +30,23 @@ _ROUTE_PREFIXES = ("frames", "detections")
 def _resolve_path(request_path: str, out_dir: Path, route_dir: Path) -> Path:
     """Map one HTTP request path to the file it should be served from.
 
-    Mirrors SimpleHTTPRequestHandler.translate_path's own traversal handling
-    (query/fragment stripped, percent-decoded, normalized, any "." or ".."
-    segment dropped rather than honoured) so forwarding /frames/ and
-    /detections/ to route_dir is exactly as safe as stock static-file
-    serving -- a crafted path cannot walk out of the directory it resolves
-    into.
+    Mirrors SimpleHTTPRequestHandler.translate_path's own traversal handling:
+    query/fragment stripped, percent-decoded, normalized, and each "/"-split
+    segment is dropped rather than honoured if it is "." or ".." *or* if it
+    contains an embedded path separator of its own (e.g. a literal backslash,
+    which os.path.dirname treats as a separator on Windows) -- otherwise a
+    single URL segment could smuggle a traversal past the "." / ".." filter.
+    With both guards in place, forwarding /frames/ and /detections/ to
+    route_dir is exactly as safe as stock static-file serving -- a crafted
+    path cannot walk out of the directory it resolves into.
     """
     path = request_path.split("?", 1)[0].split("#", 1)[0]
     path = urllib.parse.unquote(path)
-    words = [word for word in path.split("/") if word and word not in (".", "..")]
+    words = [
+        word
+        for word in path.split("/")
+        if word and word not in (".", "..") and not os.path.dirname(word)
+    ]
 
     base = route_dir if words and words[0] in _ROUTE_PREFIXES else out_dir
     result = base
