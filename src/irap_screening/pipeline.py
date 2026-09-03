@@ -64,7 +64,12 @@ def run_pipeline(route_dir: Path, cfg: Settings, route_id: str = "R01") -> dict[
     }
     _require_all_modules(module_results)
     existence = analyse_marking(
-        route, segments, detections, cfg, image_root=route_dir
+        route,
+        segments,
+        detections,
+        cfg,
+        image_root=route_dir,
+        grade_results=module_results["grade"],
     )
     recommendations = run_gapcheck(segments, module_results, existence, cfg)
 
