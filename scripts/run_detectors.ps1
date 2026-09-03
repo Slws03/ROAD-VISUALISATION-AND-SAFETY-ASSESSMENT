@@ -88,7 +88,10 @@ if ($null -eq (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 
 if (-not (Test-Path $Route)) { throw "Route directory not found: $Route" }
-$Route = (Resolve-Path $Route).Path
+# A trailing backslash survives Resolve-Path, and once this path is quoted for a
+# native exe (it has spaces), that backslash escapes the closing quote and
+# swallows every argument after it -- so -Raw silently vanishes into -Route.
+$Route = (Resolve-Path $Route).Path.TrimEnd('\')
 if (-not (Test-Path (Join-Path $Route 'frames.csv'))) {
     throw "No frames.csv in $Route - the runners key every detection by its frame_id"
 }
