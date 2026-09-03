@@ -31,8 +31,8 @@ def _resolve_path(request_path: str, out_dir: Path, route_dir: Path) -> Path:
     """Map one HTTP request path to the file it should be served from.
 
     Mirrors SimpleHTTPRequestHandler.translate_path's own traversal handling:
-    query/fragment stripped, percent-decoded, normalized, and each "/"-split
-    segment is dropped rather than honoured if it is "." or ".." *or* if it
+    query/fragment stripped, percent-decoded, and each "/"-split segment is
+    dropped rather than honoured if it is "." or ".." *or* if it
     contains an embedded path separator of its own (e.g. a literal backslash,
     which os.path.dirname treats as a separator on Windows) -- otherwise a
     single URL segment could smuggle a traversal past the "." / ".." filter.
