@@ -53,9 +53,14 @@
   main { flex: 1; overflow-y: auto; padding: 20px 24px; }
   .empty { color: var(--muted); margin-top: 40px; text-align: center; }
   figure { margin: 0 0 16px; }
-  figure img {
-    width: 100%; max-width: 900px; display: block;
+  .frame-wrap {
+    position: relative; max-width: 900px; overflow: hidden;
     border: 1px solid var(--line); border-radius: 4px; background: #000;
+  }
+  .frame-wrap img { width: 100%; display: block; }
+  .frame-wrap .overlay {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    pointer-events: none;
   }
   figcaption {
     display: flex; align-items: center; gap: 12px;
@@ -111,6 +116,8 @@ let selected = null;
 let frameIndex = 0;
 let map = null;
 const layers = {};
+let laneByFrame = new Map();
+let signByFrame = new Map();
 
 // The worst flag across the modules is what the list dot shows: a segment is as
 // bad as its worst attribute, which is how iRAP aggregates within a unit.
@@ -216,6 +223,73 @@ function recommendationsBlock(segment) {
   + `present: ${rec.present.join(", ") || "-"}</div></div>`).join("");
 }
 
+const LANE_COLOR = "#3fb950";
+const SIGN_COLOR = "#d29922";
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function inFrame(x, y, width, height) {
+  return x >= 0 && x < width && y >= 0 && y < height;
+}
+
+// Off-frame points are dropped rather than clamped. CLRerNet extends curved
+// lanes past the image edge, and a clamped point would draw a marking along
+// the border that was never detected there.
+function drawLanes(svg, record, width, height) {
+  for (const instance of record.instances) {
+    const points = instance.points.filter(([x, y]) => inFrame(x, y, width, height));
+    if (points.length === 1) {
+      const [x, y] = points[0];
+      const circle = document.createElementNS(SVG_NS, "circle");
+      circle.setAttribute("cx", x);
+      circle.setAttribute("cy", y);
+      circle.setAttribute("r", 4);
+      circle.setAttribute("fill", LANE_COLOR);
+      svg.appendChild(circle);
+    } else if (points.length > 1) {
+      const polyline = document.createElementNS(SVG_NS, "polyline");
+      polyline.setAttribute("points", points.map(([x, y]) => `${x},${y}`).join(" "));
+      polyline.setAttribute("fill", "none");
+      polyline.setAttribute("stroke", LANE_COLOR);
+      polyline.setAttribute("stroke-width", 3);
+      svg.appendChild(polyline);
+    }
+  }
+}
+
+// The class string is what gap-check matches on, so it is shown with the
+// confidence that decided whether it was accepted at all.
+function drawSigns(svg, record) {
+  for (const instance of record.instances) {
+    const [x1, y1, x2, y2] = instance.bbox;
+    const rect = document.createElementNS(SVG_NS, "rect");
+    rect.setAttribute("x", x1);
+    rect.setAttribute("y", y1);
+    rect.setAttribute("width", x2 - x1);
+    rect.setAttribute("height", y2 - y1);
+    rect.setAttribute("fill", "none");
+    rect.setAttribute("stroke", SIGN_COLOR);
+    rect.setAttribute("stroke-width", 3);
+    svg.appendChild(rect);
+
+    const label = document.createElementNS(SVG_NS, "text");
+    label.setAttribute("x", x1);
+    label.setAttribute("y", Math.max(y1 - 6, 12));
+    label.setAttribute("fill", SIGN_COLOR);
+    label.setAttribute("font-size", "20");
+    label.textContent = `${instance.cls || "?"} ${instance.conf.toFixed(2)}`;
+    svg.appendChild(label);
+  }
+}
+
+function drawOverlay(svg, width, height, frameId) {
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.innerHTML = "";
+  const lane = laneByFrame.get(frameId);
+  if (lane) drawLanes(svg, lane, width, height);
+  const sign = signByFrame.get(frameId);
+  if (sign) drawSigns(svg, sign);
+}
+
 // Stepping frames swaps the image in place rather than rebuilding the panel.
 // Rebuilding scrolls back to the top, and restoring scrollTop afterwards does
 // not work: the new image has not loaded yet, so the panel is momentarily too
@@ -223,9 +297,11 @@ function recommendationsBlock(segment) {
 function showFrame() {
   const frames = data.segments[selected].frame_ids || [];
   const image = document.getElementById("frame-img");
-  if (!image) return;
+  const overlay = document.getElementById("frame-overlay");
+  if (!image || !overlay) return;
   const frameId = frames[frameIndex];
-  image.src = `evidence/${frameId}.jpg`;
+  image.onload = () => drawOverlay(overlay, image.naturalWidth, image.naturalHeight, frameId);
+  image.src = data.frames[frameId];
   image.alt = frameId;
   document.getElementById("frame-caption").innerHTML =
     `<code>${frameId}</code> · frame ${frameIndex + 1} of ${frames.length}`;
@@ -248,7 +324,10 @@ function renderDetail() {
     <h2>Evidence</h2>
     ${frames.length
       ? `<figure>
-           <img id="frame-img" alt="">
+           <div class="frame-wrap">
+             <img id="frame-img" alt="">
+             <svg id="frame-overlay" class="overlay"></svg>
+           </div>
            <figcaption>
              <button id="prev">&larr;</button>
              <button id="next">&rarr;</button>
@@ -287,10 +366,35 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "ArrowRight") step(1);
 });
 
-fetch("data.json")
-  .then((response) => response.json())
-  .then((payload) => {
+function parseJsonl(text) {
+  const map = new Map();
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const record = JSON.parse(trimmed);
+    map.set(record.frame_id, record);
+  }
+  return map;
+}
+
+// A missing file (no sign detector run yet, say) is a valid state: it reads
+// as an empty map, the same way load_detections() in Python treats a
+// missing path as {} rather than an error.
+function fetchJsonl(path) {
+  return fetch(path)
+    .then((response) => (response.ok ? response.text() : ""))
+    .then(parseJsonl);
+}
+
+Promise.all([
+  fetch("data.json").then((response) => response.json()),
+  fetchJsonl("detections/lane.jsonl"),
+  fetchJsonl("detections/sign.jsonl"),
+])
+  .then(([payload, laneMap, signMap]) => {
     data = payload;
+    laneByFrame = laneMap;
+    signByFrame = signMap;
     renderSidebar();
     renderMap();
     if (data.segments.length) select(0);
