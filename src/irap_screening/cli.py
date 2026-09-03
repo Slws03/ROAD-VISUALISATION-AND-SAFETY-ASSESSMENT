@@ -153,7 +153,7 @@ def view(
     if no_serve:
         typer.echo(f"Serve it with: python -m http.server -d {out_dir}")
         return
-    serve_directory(out_dir, port=port, open_browser=not no_open)
+    serve_directory(out_dir, route, port=port, open_browser=not no_open)
 
 
 if __name__ == "__main__":

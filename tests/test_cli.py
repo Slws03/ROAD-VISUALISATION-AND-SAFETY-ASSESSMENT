@@ -95,6 +95,29 @@ def test_view_builds_without_serving(tmp_path: Path):
     assert data["frames"]
 
 
+def test_view_serves_the_route_directory_for_frames_and_detections(
+    tmp_path: Path, monkeypatch
+):
+    """The static server must be able to reach route_dir/frames and
+    route_dir/detections, not just the viewer's own output directory."""
+    calls = {}
+
+    def fake_serve_directory(directory, route_dir, port=8000, open_browser=True):
+        calls["directory"] = directory
+        calls["route_dir"] = route_dir
+
+    monkeypatch.setattr(
+        "irap_screening.view.serve.serve_directory", fake_serve_directory
+    )
+
+    out = tmp_path / "view"
+    result = runner.invoke(app, ["view", "--route", str(FIXTURE), "--out", str(out)])
+
+    assert result.exit_code == 0, result.output
+    assert calls["route_dir"] == FIXTURE
+    assert calls["directory"] == out
+
+
 def test_report_defaults_to_an_out_inside_the_route(tmp_path: Path):
     """Two routes must not write over each other's report by default.
 
