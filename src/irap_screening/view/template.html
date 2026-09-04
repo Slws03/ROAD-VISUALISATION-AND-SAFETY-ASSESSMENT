@@ -133,10 +133,41 @@ function worstFlag(segment) {
 
 function metricsOf(entry) {
   return Object.entries(entry)
-    .filter(([key, value]) => key !== "flag" && key !== "notes"
+    .filter(([key, value]) => key !== "flag" && key !== "notes" && key !== "irap_category"
                               && typeof value === "number")
     .map(([key, value]) => `${key}=${Number(value.toFixed(3))}`)
     .join("  ");
+}
+
+// iRAP's own descriptive band tables (Coding Manual). Display only -- these
+// labels are read straight off entry.irap_category, which the Python layer
+// already computed and tested; this is string formatting, not re-derivation.
+const IRAP_CURVATURE_LABELS = {
+  1: "1 - straight/gently curving (>800 m)",
+  2: "2 - moderate (400-800 m)",
+  3: "3 - sharp (200-400 m)",
+  4: "4 - very sharp (<200 m)",
+};
+const IRAP_GRADE_LABELS = {
+  1: "1 - flat/gentle (<7.5%)",
+  4: "4 - moderate (7.5-<10%)",
+  5: "5 - steep (>=10%)",
+};
+
+function irapCategoryLabel(module, entry) {
+  if (module === "curvature" && entry.irap_category != null) {
+    return IRAP_CURVATURE_LABELS[entry.irap_category] ?? "-";
+  }
+  if (module === "grade" && entry.irap_category != null) {
+    return IRAP_GRADE_LABELS[entry.irap_category] ?? "-";
+  }
+  if (module === "lane" && (entry.flag === "normal" || entry.flag === "critical")) {
+    // Lane marking visibility only -- iRAP's Delineation also covers hazard
+    // warning signs, which this project does not assess. Not the same
+    // attribute, so it is not labelled as one.
+    return entry.flag === "normal" ? "lane marking: adequate" : "lane marking: poor";
+  }
+  return "-";
 }
 
 function renderSidebar() {
@@ -193,6 +224,7 @@ function moduleRows(segment) {
     const detail = entry.notes ? entry.notes : metricsOf(entry);
     return `<tr><td>${module}</td>`
          + `<td class="flag ${entry.flag}">${entry.flag ?? "-"}</td>`
+         + `<td class="metrics">${irapCategoryLabel(module, entry)}</td>`
          + `<td class="metrics">${detail}</td></tr>`;
   }).join("");
 }
@@ -352,7 +384,7 @@ function renderDetail() {
          </figure>`
       : `<p class="metrics">No frames fall within this segment.</p>`}
     <h2>${segment.segment_id} · ${Math.round(segment.start_m)}-${Math.round(segment.end_m)} m</h2>
-    <table><tr><th>module</th><th>flag</th><th>metrics</th></tr>
+    <table><tr><th>module</th><th>flag</th><th>iRAP category</th><th>metrics</th></tr>
       ${moduleRows(segment)}</table>
     <h2>Signs and markings</h2>
     ${signsBlock(segment)}
