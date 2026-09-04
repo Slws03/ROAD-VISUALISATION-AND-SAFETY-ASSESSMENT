@@ -56,12 +56,12 @@ def weber_contrast_at(
 
 
 def _grade(contrast: float, cfg: Settings) -> Flag:
-    """Lower contrast is worse, so the bands read downward."""
-    if contrast >= cfg.lane.weber_watch:
-        return Flag.NORMAL
-    if contrast >= cfg.lane.weber_urgent:
-        return Flag.WATCH
-    return Flag.CRITICAL
+    """Lower contrast is worse. Two bands, matching iRAP's Delineation
+    Adequate/Poor: no separate watch band -- a threshold for routing
+    borderline segments to manual/LLM review, if wanted later, can be tuned
+    independently of this flag rather than needing its own hard-coded band.
+    """
+    return Flag.NORMAL if contrast >= cfg.lane.weber_adequate else Flag.CRITICAL
 
 
 def analyse_lane(

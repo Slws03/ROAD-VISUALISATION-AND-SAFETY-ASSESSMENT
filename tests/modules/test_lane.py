@@ -80,9 +80,13 @@ def test_bright_marking_is_normal(tmp_path: Path):
     assert results[0].metrics["weber_contrast"] > 0.35
 
 
-def test_mid_contrast_marking_is_watch(tmp_path: Path):
+def test_mid_contrast_marking_is_critical(tmp_path: Path):
+    """Two bands, not three: iRAP's Delineation is Adequate/Poor, no middle
+    ground, and this project no longer keeps its own -- a marking faded past
+    "clearly visible" grades critical/poor rather than a separate watch band.
+    """
     results = analyse_lane(*_build(tmp_path, line_level=128), image_root=tmp_path)
-    assert results[0].flag is Flag.WATCH
+    assert results[0].flag is Flag.CRITICAL
 
 
 def test_faded_marking_is_critical(tmp_path: Path):
@@ -213,7 +217,7 @@ def test_a_healthy_dashed_marking_is_not_read_as_worn(tmp_path: Path):
     results = analyse_lane(route, segments, detections, cfg, image_root=tmp_path)
 
     assert results[0].flag is Flag.NORMAL
-    assert results[0].metrics["weber_contrast"] > cfg.lane.weber_watch
+    assert results[0].metrics["weber_contrast"] > cfg.lane.weber_adequate
 
 
 def test_the_median_would_have_called_that_dashed_marking_critical(tmp_path: Path):
@@ -226,8 +230,8 @@ def test_the_median_would_have_called_that_dashed_marking_critical(tmp_path: Pat
     ]
     samples = [s for s in samples if s is not None]
 
-    assert float(np.median(samples)) < cfg.lane.weber_urgent
-    assert float(np.percentile(samples, cfg.lane.contrast_percentile)) > cfg.lane.weber_watch
+    assert float(np.median(samples)) < cfg.lane.weber_adequate
+    assert float(np.percentile(samples, cfg.lane.contrast_percentile)) > cfg.lane.weber_adequate
 
 
 def test_a_uniformly_worn_marking_is_still_critical(tmp_path: Path):

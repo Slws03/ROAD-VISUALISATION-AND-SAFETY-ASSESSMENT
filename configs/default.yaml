@@ -51,8 +51,13 @@ lane:
                                  # not_assessed: too little evidence to grade the
                                  # road, and a detector limitation must not be
                                  # reported as a road defect.
-  weber_watch: 0.35              # provisional contrast band boundary
-  weber_urgent: 0.20             # provisional contrast band boundary
+  weber_adequate: 0.35           # PROVISIONAL. Two bands, not three: iRAP's
+                                 # Delineation is Adequate/Poor, and this
+                                 # project keeps only its own equivalent
+                                 # (lane marking visibility, not the full
+                                 # attribute -- it does not cover hazard
+                                 # warning signs, a known gap). contrast >=
+                                 # this reads adequate; below it, poor.
   bg_window: 81                  # background window for contrast sampling
 
 doubleline:                      # from the doubleline_coord_scan experiment
