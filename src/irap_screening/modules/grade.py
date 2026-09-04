@@ -85,16 +85,66 @@ def pitch_series(route: AlignedRoute, cfg: Settings) -> np.ndarray:
     return fused
 
 
+def _sustained_steepest_grade(
+    grade_pct: np.ndarray, dist_m: np.ndarray, min_length_m: float
+) -> tuple[float, int]:
+    """The steepest grade sustained for at least min_length_m of distance.
+
+    Coding Manual p.54 (attribute AO): "Where there are variable grades
+    within a 100m coding segment, record the steepest gradient which is 10m
+    in length or more." A spike shorter than that -- a culvert, a speed
+    bump -- must not be recorded as the segment's grade.
+
+    For each sample, considers the smallest window of consecutive samples,
+    ending at that sample, that still spans >= min_length_m, and takes the
+    minimum |grade| within it: the level the gradient is guaranteed to hold
+    for the whole window. Widening the window can only lower or preserve
+    that minimum, never raise it, so the smallest qualifying window is also
+    the one that maximises it -- the minimal window is optimal, not an
+    approximation. The steepest such floor, across every sample, is the
+    segment's value; its sign is taken from the sample that set it.
+
+    Falls back to the single steepest sample when the segment's own IMU
+    span never reaches min_length_m (sparse data), matching the prior,
+    unfiltered behaviour rather than reporting nothing.
+    """
+    n = grade_pct.size
+    abs_grade = np.abs(grade_pct)
+
+    best_floor = -1.0
+    best_index = 0
+    left = 0
+    for right in range(n):
+        while left < right and dist_m[right] - dist_m[left + 1] >= min_length_m:
+            left += 1
+        if dist_m[right] - dist_m[left] < min_length_m:
+            continue
+        window = abs_grade[left : right + 1]
+        window_index = left + int(np.argmin(window))
+        floor = float(window[window_index - left])
+        if floor > best_floor:
+            best_floor = floor
+            best_index = window_index
+
+    if best_floor < 0:
+        best_index = int(np.argmax(abs_grade))
+        best_floor = float(abs_grade[best_index])
+
+    return float(grade_pct[best_index]), best_index
+
+
 def analyse_grade(
     route: AlignedRoute, segments: list[Segment], cfg: Settings
 ) -> list[ModuleResult]:
-    """One ModuleResult per segment, aggregating by steepest absolute grade."""
+    """One ModuleResult per segment, aggregating by steepest sustained grade."""
     pitch = pitch_series(route, cfg)
     grade_pct = np.tan(pitch) * 100.0
+    min_length_m = cfg.segment.length_m / 10.0  # iRAP: one tenth of the coding segment
 
     results: list[ModuleResult] = []
     for segment in segments:
         window = grade_pct[segment.imu_start : segment.imu_end]
+        window_dist = route.imu_dist_m[segment.imu_start : segment.imu_end]
         if window.size == 0:
             results.append(
                 ModuleResult(
@@ -106,8 +156,9 @@ def analyse_grade(
             )
             continue
 
-        steepest_index = int(np.argmax(np.abs(window)))
-        steepest = float(window[steepest_index])
+        steepest, steepest_index = _sustained_steepest_grade(
+            window, window_dist, min_length_m
+        )
         flag = (
             Flag.CRITICAL
             if abs(steepest) >= cfg.grade.threshold_pct

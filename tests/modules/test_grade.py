@@ -9,12 +9,13 @@ from irap_screening.config import load_config
 from irap_screening.io.align import align_route
 from irap_screening.io.schema import Flag, ImuSample
 from irap_screening.modules.grade import (
+    _sustained_steepest_grade,
     analyse_grade,
     longitudinal_accel,
     pitch_series,
 )
 from irap_screening.segment import build_segments
-from tests.factories import braking_route, graded_route, straight_route
+from tests.factories import braking_route, graded_route, spiked_grade_route, straight_route
 
 
 def _analyse(frames, gps, imu, cfg=None):
@@ -68,6 +69,77 @@ def test_segment_aggregation_takes_the_steepest_sample():
     results = _analyse(*graded_route(grade_pct=8.0, length_m=300.0))
     for result in results:
         assert abs(result.metrics["grade_pct"]) >= 7.0
+
+
+def test_sustained_steepest_grade_ignores_a_short_spike():
+    """Coding Manual p.54 (attribute AO): a grade shorter than 10 m (one tenth
+    of the 100 m segment) must not be recorded as the segment's grade -- a
+    culvert or speed bump must not read as the segment's slope. Works on
+    synthetic (grade_pct, dist_m) arrays directly, bypassing pitch_series's
+    complementary filter, whose own slow convergence would otherwise be a
+    second, unrelated reason a short spike reads low.
+    """
+    dist_m = np.linspace(0.0, 20.0, 61)
+    grade_pct = np.zeros_like(dist_m)
+    spike = (dist_m >= 9.5) & (dist_m < 10.5)  # a 1 m wide spike
+    grade_pct[spike] = 20.0
+
+    value, _ = _sustained_steepest_grade(grade_pct, dist_m, min_length_m=10.0)
+    assert value == pytest.approx(0.0, abs=1e-9)
+
+
+def test_sustained_steepest_grade_picks_up_a_run_at_least_as_long_as_the_floor():
+    dist_m = np.linspace(0.0, 30.0, 91)
+    grade_pct = np.zeros_like(dist_m)
+    run = (dist_m >= 8.0) & (dist_m < 20.0)  # a 12 m run
+    grade_pct[run] = 15.0
+
+    value, _ = _sustained_steepest_grade(grade_pct, dist_m, min_length_m=10.0)
+    assert value == pytest.approx(15.0, abs=1e-9)
+
+
+def test_sustained_steepest_grade_preserves_sign():
+    dist_m = np.linspace(0.0, 30.0, 91)
+    grade_pct = np.zeros_like(dist_m)
+    run = (dist_m >= 8.0) & (dist_m < 20.0)
+    grade_pct[run] = -15.0
+
+    value, _ = _sustained_steepest_grade(grade_pct, dist_m, min_length_m=10.0)
+    assert value == pytest.approx(-15.0, abs=1e-9)
+
+
+def test_sustained_steepest_grade_falls_back_when_the_segment_itself_is_too_short():
+    """A segment whose IMU span never reaches min_length_m has no qualifying
+    window at all; fall back to the single worst sample rather than reporting
+    nothing.
+    """
+    dist_m = np.array([0.0, 1.0, 2.0])
+    grade_pct = np.array([1.0, 9.0, 2.0])
+
+    value, index = _sustained_steepest_grade(grade_pct, dist_m, min_length_m=10.0)
+    assert value == pytest.approx(9.0)
+    assert index == 1
+
+
+def test_short_spike_reads_far_flatter_than_a_sustained_grade_end_to_end():
+    """Same peak steepness, same route, only the run length differs -- and
+    both go through the same slow complementary filter, so any difference in
+    the reported grade is attributable to the 10 m duration floor, not to
+    filter dynamics.
+    """
+    short = _analyse(
+        *spiked_grade_route(
+            background_pct=0.0, spike_pct=20.0, spike_start_m=40.0,
+            spike_length_m=2.0, length_m=150.0,
+        )
+    )
+    long = _analyse(
+        *spiked_grade_route(
+            background_pct=0.0, spike_pct=20.0, spike_start_m=40.0,
+            spike_length_m=40.0, length_m=150.0,
+        )
+    )
+    assert abs(short[0].metrics["grade_pct"]) < abs(long[0].metrics["grade_pct"]) / 2
 
 
 def test_gyro_term_actually_contributes():
