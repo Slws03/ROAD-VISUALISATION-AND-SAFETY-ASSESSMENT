@@ -54,6 +54,22 @@ def estimate_gyro_bias(route: AlignedRoute, cfg: Settings) -> float:
     return float(gz[stationary].mean())
 
 
+def irap_curvature_category(radius_m: float) -> int:
+    """iRAP Curvature Risk Factor descriptive category, by radius band.
+
+    Display only: independent of threshold_m, which drives the flag. >=800->1
+    (straight/gently curving), 400-800->2 (moderate), 200-400->3 (sharp),
+    <200->4 (very sharp).
+    """
+    if radius_m >= 800.0:
+        return 1
+    if radius_m >= 400.0:
+        return 2
+    if radius_m >= 200.0:
+        return 3
+    return 4
+
+
 def analyse_curvature(
     route: AlignedRoute, segments: list[Segment], cfg: Settings
 ) -> list[ModuleResult]:
@@ -135,6 +151,7 @@ def analyse_curvature(
                     "yaw_rate_rad_s": float(abs(usable_gz[worst_index])),
                     "mean_speed_mps": mean_speed,
                     "gyro_bias_rad_s": bias,
+                    "irap_category": float(irap_curvature_category(radius_m)),
                 },
             )
         )

@@ -11,6 +11,7 @@ from irap_screening.io.schema import Flag, ImuSample
 from irap_screening.modules.grade import (
     _sustained_steepest_grade,
     analyse_grade,
+    irap_grade_category,
     longitudinal_accel,
     pitch_series,
 )
@@ -29,6 +30,25 @@ def test_level_road_reports_zero_grade():
     results = _analyse(*straight_route(length_m=500.0))
     assert results[0].metrics["grade_pct"] == pytest.approx(0.0, abs=0.5)
     assert results[0].flag is Flag.NORMAL
+
+
+def test_irap_grade_category_boundaries():
+    """iRAP Grade Risk Factor: codes are 1, 4, 5 -- not sequential -- per the
+    Coding Manual's own attribute value table: <7.5%->1, 7.5-<10%->4, >=10%->5.
+    """
+    assert irap_grade_category(0.0) == 1
+    assert irap_grade_category(7.4) == 1
+    assert irap_grade_category(-7.4) == 1
+    assert irap_grade_category(7.5) == 4
+    assert irap_grade_category(9.9) == 4
+    assert irap_grade_category(-9.9) == 4
+    assert irap_grade_category(10.0) == 5
+    assert irap_grade_category(-15.0) == 5
+
+
+def test_analysis_reports_the_irap_category():
+    results = _analyse(*graded_route(grade_pct=8.0, length_m=300.0))
+    assert results[0].metrics["irap_category"] == 4
 
 
 def test_known_grade_is_recovered():

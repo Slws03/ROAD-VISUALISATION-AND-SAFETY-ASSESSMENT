@@ -133,6 +133,22 @@ def _sustained_steepest_grade(
     return float(grade_pct[best_index]), best_index
 
 
+def irap_grade_category(grade_pct: float) -> int:
+    """iRAP Grade Risk Factor descriptive category.
+
+    Display only: independent of threshold_pct, which drives the flag. Codes
+    are 1, 4, 5 -- not sequential -- per the Coding Manual's own attribute
+    value table: <7.5%->1 (flat/gentle), 7.5-<10%->4 (moderate), >=10%->5
+    (steep).
+    """
+    magnitude = abs(grade_pct)
+    if magnitude < 7.5:
+        return 1
+    if magnitude < 10.0:
+        return 4
+    return 5
+
+
 def analyse_grade(
     route: AlignedRoute, segments: list[Segment], cfg: Settings
 ) -> list[ModuleResult]:
@@ -174,6 +190,7 @@ def analyse_grade(
                     "pitch_deg": float(
                         np.degrees(pitch[segment.imu_start + steepest_index])
                     ),
+                    "irap_category": float(irap_grade_category(steepest)),
                 },
             )
         )
