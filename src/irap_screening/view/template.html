@@ -197,12 +197,20 @@ function moduleRows(segment) {
   }).join("");
 }
 
+function doubleLineText(dl) {
+  // The scan only runs on a critical-grade segment (gap-check's only use of
+  // this value), so present=false is ambiguous without assessed: it means
+  // either "scanned, none found" or "never scanned here".
+  if (dl.assessed === false) return "not checked (grade not critical)";
+  if (dl.present) return `present (confidence ${dl.confidence.toFixed(2)})`;
+  return "absent";
+}
+
 function signsBlock(segment) {
   if (!segment.signs || !segment.signs.length) {
     const dl = segment.double_line || {};
     return `<p class="metrics">No signs accepted in this segment. `
-         + `Double line: ${dl.present ? "present" : "absent"}`
-         + (dl.present ? ` (confidence ${dl.confidence.toFixed(2)})` : "")
+         + `Double line: ${doubleLineText(dl)}`
          + `</p>`;
   }
   return `<table><tr><th>class</th><th>conf</th><th>at</th></tr>`

@@ -139,7 +139,16 @@ class SignRecord(BaseModel):
 
 
 class DoubleLineRecord(BaseModel):
+    """present=False is ambiguous on its own: it means either "scanned, found
+    nothing" or "never scanned" (the scan only runs on a critical-grade
+    segment). assessed distinguishes the two for anything displaying this to
+    a person -- gap-check itself never needs it, since it only reads
+    `present` when grade is already critical, the same condition that
+    guarantees a scan ran.
+    """
+
     present: bool
+    assessed: bool = True
     confidence: float = 0.0
     evidence: list[str] = Field(default_factory=list)
 

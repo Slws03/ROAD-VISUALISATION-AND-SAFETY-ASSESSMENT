@@ -216,6 +216,24 @@ def test_double_line_scan_is_skipped_outside_a_critical_grade(tmp_path: Path):
     )
     assert results[0].double_line.present is False
     assert results[0].double_line.evidence == []
+    assert results[0].double_line.assessed is False
+
+
+def test_double_line_scan_is_marked_assessed_on_a_critical_grade(tmp_path: Path):
+    """The viewer must be able to tell "checked, none found" apart from "never
+    checked" -- both currently read as present=False, and only this field
+    distinguishes them."""
+    route, segments, detections, cfg = _build(tmp_path, _single_line_image(), None)
+    results = analyse_marking(
+        route,
+        segments,
+        detections,
+        cfg,
+        image_root=tmp_path,
+        grade_results=_grade_results(segments, Flag.CRITICAL),
+    )
+    assert results[0].double_line.present is False
+    assert results[0].double_line.assessed is True
 
 
 def test_signs_are_still_collected_outside_a_critical_grade(tmp_path: Path):

@@ -194,6 +194,7 @@ def analyse_marking(
                 signs=signs,
                 double_line=DoubleLineRecord(
                     present=present,
+                    assessed=scan_double_line,
                     confidence=confidence if present else 0.0,
                     evidence=sorted(set(evidence)),
                 ),
