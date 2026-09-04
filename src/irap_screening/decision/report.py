@@ -30,7 +30,7 @@ from irap_screening.io.schema import (
 )
 
 SCHEMA_VERSION = "1.0"
-SCORING_MODULES = ("curvature", "grade", "lane", "condition")
+SCORING_MODULES = ("curvature", "grade", "delineation", "condition")
 
 
 def _index(results: list[ModuleResult]) -> dict[str, ModuleResult]:

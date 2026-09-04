@@ -27,7 +27,7 @@ def _segments(count: int = 5) -> list[Segment]:
     ]
 
 
-def _module_results(segments, curvature=Flag.NORMAL, grade=Flag.NORMAL, lane=Flag.NORMAL):
+def _module_results(segments, curvature=Flag.NORMAL, grade=Flag.NORMAL, delineation=Flag.NORMAL):
     """Flag the fourth segment (start_m = 300) and leave the rest normal."""
     target = segments[3].segment_id
 
@@ -45,7 +45,7 @@ def _module_results(segments, curvature=Flag.NORMAL, grade=Flag.NORMAL, lane=Fla
     return {
         "curvature": series("curvature", curvature),
         "grade": series("grade", grade),
-        "lane": series("lane", lane),
+        "delineation": series("delineation", delineation),
         "condition": series("condition", Flag.NORMAL),
     }
 
@@ -186,7 +186,7 @@ def test_poor_lane_marking_raises_priority_without_adding_a_recommendation():
     )
     raised = run_gapcheck(
         segments,
-        _module_results(segments, curvature=Flag.CRITICAL, lane=Flag.CRITICAL),
+        _module_results(segments, curvature=Flag.CRITICAL, delineation=Flag.CRITICAL),
         _existence(segments), CFG,
     )
     assert len(raised["R01-0003"]) == len(plain["R01-0003"])
@@ -241,7 +241,7 @@ def _curve_module_results(segments, critical_ids, unassessed_ids=()):
             )
         return results
 
-    return {name: series(name) for name in ("curvature", "grade", "lane", "condition")}
+    return {name: series(name) for name in ("curvature", "grade", "delineation", "condition")}
 
 
 def _advance_present(recs, segment_id):

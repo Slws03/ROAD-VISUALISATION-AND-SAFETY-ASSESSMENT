@@ -105,7 +105,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const MODULES = ["curvature", "grade", "lane", "condition"];
+const MODULES = ["curvature", "grade", "delineation", "condition"];
 const FLAG_COLOR = {
   normal: "#3fb950", watch: "#d29922",
   critical: "#f85149", not_assessed: "#6e7681",
@@ -161,10 +161,11 @@ function irapCategoryLabel(module, entry) {
   if (module === "grade" && entry.irap_category != null) {
     return IRAP_GRADE_LABELS[entry.irap_category] ?? "-";
   }
-  if (module === "lane" && (entry.flag === "normal" || entry.flag === "critical")) {
+  if (module === "delineation" && (entry.flag === "normal" || entry.flag === "critical")) {
     // Lane marking visibility only -- iRAP's Delineation also covers hazard
-    // warning signs, which this project does not assess. Not the same
-    // attribute, so it is not labelled as one.
+    // warning signs, which this project does not assess. The module row
+    // itself already says "delineation"; this qualifies it down to the
+    // part actually measured, rather than claiming the full attribute.
     return entry.flag === "normal" ? "lane marking: adequate" : "lane marking: poor";
   }
   return "-";
@@ -222,7 +223,11 @@ function moduleRows(segment) {
   return MODULES.map((module) => {
     const entry = segment[module] || {};
     const detail = entry.notes ? entry.notes : metricsOf(entry);
-    return `<tr><td>${module}</td>`
+    // "delineation" alone would read as the full iRAP attribute; this
+    // module only ever measures the marking half of it (see
+    // irapCategoryLabel), so the row label says so up front.
+    const label = module === "delineation" ? "delineation (marking only)" : module;
+    return `<tr><td>${label}</td>`
          + `<td class="flag ${entry.flag}">${entry.flag ?? "-"}</td>`
          + `<td class="metrics">${irapCategoryLabel(module, entry)}</td>`
          + `<td class="metrics">${detail}</td></tr>`;

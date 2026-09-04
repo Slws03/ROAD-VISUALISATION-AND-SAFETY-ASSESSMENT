@@ -49,8 +49,8 @@ def _fixture():
                          metrics={"grade_pct": 1.0})
             for s in segments
         ],
-        "lane": [
-            ModuleResult(module="lane", segment_id=s.segment_id, flag=Flag.WATCH,
+        "delineation": [
+            ModuleResult(module="delineation", segment_id=s.segment_id, flag=Flag.WATCH,
                          metrics={"weber_contrast": 0.28},
                          evidence=[f"{s.segment_id}#lane#0"])
             for s in segments
@@ -123,7 +123,7 @@ def test_coverage_statistics_are_reported_per_module():
 
 
 def test_cv_modules_carry_instance_references():
-    assert _report()["segments"][0]["lane"]["instances"] == ["R01-0000#lane#0"]
+    assert _report()["segments"][0]["delineation"]["instances"] == ["R01-0000#lane#0"]
 
 
 def test_geojson_has_one_linestring_feature_per_segment():

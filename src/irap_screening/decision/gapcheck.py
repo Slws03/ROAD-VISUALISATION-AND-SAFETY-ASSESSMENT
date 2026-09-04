@@ -109,7 +109,7 @@ def run_gapcheck(
     for segment in segments:
         curvature_flag = _flag_of(module_results, "curvature", segment.segment_id)
         grade_flag = _flag_of(module_results, "grade", segment.segment_id)
-        lane_flag = _flag_of(module_results, "lane", segment.segment_id)
+        delineation_flag = _flag_of(module_results, "delineation", segment.segment_id)
         entry = existence_by_segment.get(segment.segment_id)
 
         # Rule 1: a critical curve needs an advance warning sign AND chevrons.
@@ -211,7 +211,7 @@ def run_gapcheck(
         # Rule 4: worst-band lane marking raises priority but adds nothing new.
         # It corresponds to no iRAP countermeasure, so turning it into a
         # recommendation of its own would overclaim.
-        if lane_flag is Flag.CRITICAL:
+        if delineation_flag is Flag.CRITICAL:
             for recommendation in recommendations[segment.segment_id]:
                 recommendation.priority = _raise_priority(recommendation.priority)
                 recommendation.priority_raised_by.append("lane_marking_worst_band")

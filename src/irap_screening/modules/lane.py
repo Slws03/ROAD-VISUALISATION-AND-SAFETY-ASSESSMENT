@@ -7,6 +7,15 @@ corridor location, while contrast carries the severity banding.
 
 Note the comparison direction: lower contrast means a worse marking, the
 opposite of the curvature and grade thresholds.
+
+MODULE_NAME is "delineation", not "lane": this is the report-facing key
+gap-check and the viewer key their output on, and iRAP's Delineation
+attribute is what a reader will look for it under. It stays a partial
+match, not a false one -- this module only ever measures marking
+visibility, never the hazard-warning-sign half of the real attribute, and
+the viewer says so next to it. Everything internal to this file (the
+functions, cfg.lane.*, LaneInstance) keeps the more specific "lane"
+naming, since that is what it actually computes.
 """
 
 from __future__ import annotations
@@ -21,7 +30,9 @@ from irap_screening.io.align import AlignedRoute
 from irap_screening.io.detections import DetectionSet
 from irap_screening.io.schema import Flag, LaneInstance, ModuleResult, Segment
 
-MODULE_NAME = "lane"
+MODULE_NAME = "delineation"  # external/report key -- see module docstring;
+                              # internal names (analyse_lane, LaneInstance,
+                              # cfg.lane.*) stay lane-marking-specific.
 
 
 def weber_contrast_at(
