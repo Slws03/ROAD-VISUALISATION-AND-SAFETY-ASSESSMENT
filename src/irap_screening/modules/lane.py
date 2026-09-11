@@ -75,6 +75,14 @@ def _grade(contrast: float, cfg: Settings) -> Flag:
     return Flag.NORMAL if contrast >= cfg.lane.weber_adequate else Flag.CRITICAL
 
 
+def irap_delineation_category(flag: Flag) -> int:
+    """iRAP Delineation descriptive category. Display only, mirrors the flag:
+    1 (Adequate) for Flag.NORMAL, 2 (Poor) for Flag.CRITICAL -- unlike
+    curvature/grade there is no independent numeric scale to derive from.
+    """
+    return 1 if flag is Flag.NORMAL else 2
+
+
 def analyse_lane(
     route: AlignedRoute,
     segments: list[Segment],
@@ -186,16 +194,18 @@ def analyse_lane(
             continue
 
         worst_contrast = float(min(contrasts))
+        flag = _grade(worst_contrast, cfg)
         results.append(
             ModuleResult(
                 module=MODULE_NAME,
                 segment_id=segment.segment_id,
-                flag=_grade(worst_contrast, cfg),
+                flag=flag,
                 metrics={
                     "weber_contrast": worst_contrast,
                     "detection_rate": detection_rate,
                     "detected_frames": float(detected_frames),
                     "total_frames": float(total_frames),
+                    "irap_category": float(irap_delineation_category(flag)),
                 },
                 evidence=evidence,
             )

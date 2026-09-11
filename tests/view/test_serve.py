@@ -9,10 +9,11 @@ route directory entirely.
 
 from pathlib import Path
 
-from irap_screening.view.serve import _resolve_path
+from irap_screening.view.serve import _resolve_multi_path, _resolve_path
 
 OUT_DIR = Path("/srv/route/view")
 ROUTE_DIR = Path("/srv/route")
+ROUTE_DIRS = {"route_a": Path("/data/route_a"), "route_b": Path("/data/route_b")}
 
 
 def test_an_ordinary_path_resolves_under_out_dir():
@@ -73,3 +74,39 @@ def test_a_segment_with_an_embedded_separator_cannot_escape_route_dir():
 def test_a_segment_with_an_embedded_separator_cannot_escape_out_dir():
     """Same trick, but aimed at escaping out_dir entirely."""
     assert _resolve_path("/..\\..\\secret.txt", OUT_DIR, ROUTE_DIR) == OUT_DIR
+
+
+def test_multi_route_data_json_resolves_under_out_dir():
+    """<route_id>/data.json is an ordinary file export_routes already wrote there."""
+    assert (
+        _resolve_multi_path("/route_a/data.json", OUT_DIR, ROUTE_DIRS)
+        == OUT_DIR / "route_a" / "data.json"
+    )
+
+
+def test_multi_route_frames_prefix_resolves_under_that_routes_dir():
+    assert (
+        _resolve_multi_path("/route_a/frames/f_000000.jpg", OUT_DIR, ROUTE_DIRS)
+        == ROUTE_DIRS["route_a"] / "frames" / "f_000000.jpg"
+    )
+
+
+def test_multi_route_detections_prefix_resolves_under_that_routes_dir():
+    assert (
+        _resolve_multi_path("/route_b/detections/lane.jsonl", OUT_DIR, ROUTE_DIRS)
+        == ROUTE_DIRS["route_b"] / "detections" / "lane.jsonl"
+    )
+
+
+def test_multi_route_unknown_route_id_falls_back_to_out_dir():
+    """A path that merely looks like /<id>/frames/... but names no known route
+    is just an ordinary path under out_dir, not an error."""
+    assert (
+        _resolve_multi_path("/nope/frames/x.jpg", OUT_DIR, ROUTE_DIRS)
+        == OUT_DIR / "nope" / "frames" / "x.jpg"
+    )
+
+
+def test_multi_route_root_resolves_to_out_dir_itself():
+    assert _resolve_multi_path("/", OUT_DIR, ROUTE_DIRS) == OUT_DIR
+    assert _resolve_multi_path("/routes.json", OUT_DIR, ROUTE_DIRS) == OUT_DIR / "routes.json"

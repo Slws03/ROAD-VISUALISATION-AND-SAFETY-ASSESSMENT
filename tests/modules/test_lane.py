@@ -11,7 +11,7 @@ from irap_screening.config import load_config
 from irap_screening.io.align import align_route
 from irap_screening.io.detections import DetectionSet
 from irap_screening.io.schema import DetectionRecord, Flag, LaneInstance, Transform
-from irap_screening.modules.lane import analyse_lane, weber_contrast_at
+from irap_screening.modules.lane import analyse_lane, irap_delineation_category, weber_contrast_at
 from irap_screening.segment import build_segments
 from tests.factories import straight_route
 
@@ -87,6 +87,19 @@ def test_mid_contrast_marking_is_critical(tmp_path: Path):
     """
     results = analyse_lane(*_build(tmp_path, line_level=128), image_root=tmp_path)
     assert results[0].flag is Flag.CRITICAL
+
+
+def test_irap_delineation_category_matches_the_flag():
+    assert irap_delineation_category(Flag.NORMAL) == 1
+    assert irap_delineation_category(Flag.CRITICAL) == 2
+
+
+def test_analysis_reports_the_irap_category(tmp_path: Path):
+    normal = analyse_lane(*_build(tmp_path, line_level=200), image_root=tmp_path)
+    assert normal[0].metrics["irap_category"] == 1.0
+
+    critical = analyse_lane(*_build(tmp_path, line_level=110), image_root=tmp_path)
+    assert critical[0].metrics["irap_category"] == 2.0
 
 
 def test_faded_marking_is_critical(tmp_path: Path):

@@ -118,6 +118,53 @@ def test_view_serves_the_route_directory_for_frames_and_detections(
     assert calls["directory"] == out
 
 
+def test_view_scans_a_directory_of_routes(tmp_path: Path):
+    """Pointing --route at a directory of routes (not a route itself) builds
+    every route it finds under one shared page, instead of erroring out."""
+    parent = tmp_path / "routes"
+    _write_route(parent / "route_a")
+    _write_route(parent / "route_b")
+    out = tmp_path / "view"
+
+    result = runner.invoke(app, ["view", "--route", str(parent), "--out", str(out), "--no-serve"])
+
+    assert result.exit_code == 0, result.output
+    assert (out / "index.html").exists()
+    routes = json.loads((out / "routes.json").read_text(encoding="utf-8"))
+    assert {r["id"] for r in routes} == {"route_a", "route_b"}
+    assert (out / "route_a" / "data.json").exists()
+    assert (out / "route_b" / "data.json").exists()
+
+
+def test_view_scan_serves_each_routes_own_directory(tmp_path: Path, monkeypatch):
+    parent = tmp_path / "routes"
+    _write_route(parent / "route_a")
+    _write_route(parent / "route_b")
+    calls = {}
+
+    def fake_serve_routes(directory, route_dirs, port=8000, open_browser=True):
+        calls["directory"] = directory
+        calls["route_dirs"] = route_dirs
+
+    monkeypatch.setattr("irap_screening.view.serve.serve_routes", fake_serve_routes)
+
+    out = tmp_path / "view"
+    result = runner.invoke(app, ["view", "--route", str(parent), "--out", str(out)])
+
+    assert result.exit_code == 0, result.output
+    assert calls["directory"] == out
+    assert calls["route_dirs"] == {"route_a": parent / "route_a", "route_b": parent / "route_b"}
+
+
+def test_view_scan_rejects_an_empty_directory(tmp_path: Path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    result = runner.invoke(app, ["view", "--route", str(empty), "--no-serve"])
+
+    assert result.exit_code != 0
+
+
 def test_report_defaults_to_an_out_inside_the_route(tmp_path: Path):
     """Two routes must not write over each other's report by default.
 

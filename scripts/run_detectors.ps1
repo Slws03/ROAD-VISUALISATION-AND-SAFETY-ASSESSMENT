@@ -51,7 +51,7 @@ param(
 
     [string] $Raw,
 
-    [string] $Weights = "G:\My Drive\FYP_runs\yolo11m_5class_v1\weights\best.pt",
+    [string] $Weights = "./best.pt",
 
     [string] $Out = "",
 

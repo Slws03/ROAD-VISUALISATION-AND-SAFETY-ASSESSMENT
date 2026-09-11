@@ -10,7 +10,8 @@ import json
 from pathlib import Path
 
 from irap_screening.config import load_config
-from irap_screening.view.export import TEMPLATE, export_view
+from irap_screening.view.export import TEMPLATE, discover_routes, export_routes, export_view
+from tests.test_pipeline import _write_route
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "route_demo"
 
@@ -108,3 +109,33 @@ def test_coverage_uses_total_and_not_assessed(tmp_path):
 def test_the_template_ships_with_the_package():
     """It is data, not code, so a packaging change could drop it silently."""
     assert TEMPLATE.exists()
+
+
+def test_discover_routes_treats_a_route_directory_as_one_route():
+    assert discover_routes(FIXTURE) == {FIXTURE.name: FIXTURE}
+
+
+def test_discover_routes_scans_subdirectories_of_a_parent(tmp_path):
+    _write_route(tmp_path / "route_a")
+    _write_route(tmp_path / "route_b")
+    (tmp_path / "not_a_route").mkdir()  # no frames.csv/gps.csv/imu.csv: skipped
+
+    routes = discover_routes(tmp_path)
+
+    assert routes == {"route_a": tmp_path / "route_a", "route_b": tmp_path / "route_b"}
+
+
+def test_export_routes_writes_one_shared_page_and_per_route_data(tmp_path):
+    _write_route(tmp_path / "route_a")
+    _write_route(tmp_path / "route_b")
+    out = tmp_path / "view"
+
+    out_dir = export_routes(discover_routes(tmp_path), load_config(), out)
+
+    assert (out_dir / "index.html").exists()
+    routes = json.loads((out_dir / "routes.json").read_text(encoding="utf-8"))
+    assert {r["id"] for r in routes} == {"route_a", "route_b"}
+    for route_id in ("route_a", "route_b"):
+        assert (out_dir / route_id / "data.json").exists()
+        # Only the shared page at out_dir is served; a nested one would be dead weight.
+        assert not (out_dir / route_id / "index.html").exists()

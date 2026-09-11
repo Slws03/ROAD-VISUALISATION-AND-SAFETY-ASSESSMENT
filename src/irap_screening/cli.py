@@ -140,20 +140,38 @@ def view(
     produced them, with the detections drawn on. It serves over HTTP rather than
     writing a file to double-click because the page fetches its data, which the
     browser refuses to do from a file:// URL.
+
+    --route may also name a directory of routes (each an immediate
+    subdirectory with its own frames.csv/gps.csv/imu.csv): every route found
+    is built, and the page gets a switcher to jump between them.
     """
-    from irap_screening.view.export import export_view
-    from irap_screening.view.serve import serve_directory
+    from irap_screening.view.export import discover_routes, export_routes, export_view, is_route_dir
+    from irap_screening.view.serve import serve_directory, serve_routes
 
     route = _require_route(route)
     out = out or route / "view"
     cfg = load_config(profile=config, overrides=set_)
-    out_dir = export_view(route, cfg, out, route_id=route_id)
-    typer.echo(f"Built {out_dir}")
+
+    if is_route_dir(route):
+        out_dir = export_view(route, cfg, out, route_id=route_id)
+        typer.echo(f"Built {out_dir}")
+        if no_serve:
+            typer.echo(f"Serve it with: python -m http.server -d {out_dir}")
+            return
+        serve_directory(out_dir, route, port=port, open_browser=not no_open)
+        return
+
+    routes = discover_routes(route)
+    if not routes:
+        typer.secho(f"No routes found under: {route}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    out_dir = export_routes(routes, cfg, out)
+    typer.echo(f"Built {out_dir} ({len(routes)} route(s): {', '.join(sorted(routes))})")
 
     if no_serve:
         typer.echo(f"Serve it with: python -m http.server -d {out_dir}")
         return
-    serve_directory(out_dir, route, port=port, open_browser=not no_open)
+    serve_routes(out_dir, routes, port=port, open_browser=not no_open)
 
 
 if __name__ == "__main__":
