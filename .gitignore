@@ -35,3 +35,8 @@ Thumbs.db
 .vscode/
 
 .worktrees/
+
+# Tool artifacts
+.codegraph/
+*.drawio.png
+.$*.drawio.png.bkp
