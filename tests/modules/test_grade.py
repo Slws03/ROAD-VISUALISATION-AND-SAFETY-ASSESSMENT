@@ -8,9 +8,15 @@ import pytest
 from irap_screening.config import load_config
 from irap_screening.io.align import align_route
 from irap_screening.io.schema import Flag, ImuSample
-from irap_screening.modules.grade import analyse_grade, pitch_series
+from irap_screening.modules.grade import (
+    _sustained_steepest_grade,
+    analyse_grade,
+    irap_grade_category,
+    longitudinal_accel,
+    pitch_series,
+)
 from irap_screening.segment import build_segments
-from tests.factories import graded_route, straight_route
+from tests.factories import braking_route, graded_route, spiked_grade_route, straight_route
 
 
 def _analyse(frames, gps, imu, cfg=None):
@@ -24,6 +30,25 @@ def test_level_road_reports_zero_grade():
     results = _analyse(*straight_route(length_m=500.0))
     assert results[0].metrics["grade_pct"] == pytest.approx(0.0, abs=0.5)
     assert results[0].flag is Flag.NORMAL
+
+
+def test_irap_grade_category_boundaries():
+    """iRAP Grade Risk Factor: codes are 1, 4, 5 -- not sequential -- per the
+    Coding Manual's own attribute value table: <7.5%->1, 7.5-<10%->4, >=10%->5.
+    """
+    assert irap_grade_category(0.0) == 1
+    assert irap_grade_category(7.4) == 1
+    assert irap_grade_category(-7.4) == 1
+    assert irap_grade_category(7.5) == 4
+    assert irap_grade_category(9.9) == 4
+    assert irap_grade_category(-9.9) == 4
+    assert irap_grade_category(10.0) == 5
+    assert irap_grade_category(-15.0) == 5
+
+
+def test_analysis_reports_the_irap_category():
+    results = _analyse(*graded_route(grade_pct=8.0, length_m=300.0))
+    assert results[0].metrics["irap_category"] == 4
 
 
 def test_known_grade_is_recovered():
@@ -64,6 +89,77 @@ def test_segment_aggregation_takes_the_steepest_sample():
     results = _analyse(*graded_route(grade_pct=8.0, length_m=300.0))
     for result in results:
         assert abs(result.metrics["grade_pct"]) >= 7.0
+
+
+def test_sustained_steepest_grade_ignores_a_short_spike():
+    """Coding Manual p.54 (attribute AO): a grade shorter than 10 m (one tenth
+    of the 100 m segment) must not be recorded as the segment's grade -- a
+    culvert or speed bump must not read as the segment's slope. Works on
+    synthetic (grade_pct, dist_m) arrays directly, bypassing pitch_series's
+    complementary filter, whose own slow convergence would otherwise be a
+    second, unrelated reason a short spike reads low.
+    """
+    dist_m = np.linspace(0.0, 20.0, 61)
+    grade_pct = np.zeros_like(dist_m)
+    spike = (dist_m >= 9.5) & (dist_m < 10.5)  # a 1 m wide spike
+    grade_pct[spike] = 20.0
+
+    value, _ = _sustained_steepest_grade(grade_pct, dist_m, min_length_m=10.0)
+    assert value == pytest.approx(0.0, abs=1e-9)
+
+
+def test_sustained_steepest_grade_picks_up_a_run_at_least_as_long_as_the_floor():
+    dist_m = np.linspace(0.0, 30.0, 91)
+    grade_pct = np.zeros_like(dist_m)
+    run = (dist_m >= 8.0) & (dist_m < 20.0)  # a 12 m run
+    grade_pct[run] = 15.0
+
+    value, _ = _sustained_steepest_grade(grade_pct, dist_m, min_length_m=10.0)
+    assert value == pytest.approx(15.0, abs=1e-9)
+
+
+def test_sustained_steepest_grade_preserves_sign():
+    dist_m = np.linspace(0.0, 30.0, 91)
+    grade_pct = np.zeros_like(dist_m)
+    run = (dist_m >= 8.0) & (dist_m < 20.0)
+    grade_pct[run] = -15.0
+
+    value, _ = _sustained_steepest_grade(grade_pct, dist_m, min_length_m=10.0)
+    assert value == pytest.approx(-15.0, abs=1e-9)
+
+
+def test_sustained_steepest_grade_falls_back_when_the_segment_itself_is_too_short():
+    """A segment whose IMU span never reaches min_length_m has no qualifying
+    window at all; fall back to the single worst sample rather than reporting
+    nothing.
+    """
+    dist_m = np.array([0.0, 1.0, 2.0])
+    grade_pct = np.array([1.0, 9.0, 2.0])
+
+    value, index = _sustained_steepest_grade(grade_pct, dist_m, min_length_m=10.0)
+    assert value == pytest.approx(9.0)
+    assert index == 1
+
+
+def test_short_spike_reads_far_flatter_than_a_sustained_grade_end_to_end():
+    """Same peak steepness, same route, only the run length differs -- and
+    both go through the same slow complementary filter, so any difference in
+    the reported grade is attributable to the 10 m duration floor, not to
+    filter dynamics.
+    """
+    short = _analyse(
+        *spiked_grade_route(
+            background_pct=0.0, spike_pct=20.0, spike_start_m=40.0,
+            spike_length_m=2.0, length_m=150.0,
+        )
+    )
+    long = _analyse(
+        *spiked_grade_route(
+            background_pct=0.0, spike_pct=20.0, spike_start_m=40.0,
+            spike_length_m=40.0, length_m=150.0,
+        )
+    )
+    assert abs(short[0].metrics["grade_pct"]) < abs(long[0].metrics["grade_pct"]) / 2
 
 
 def test_gyro_term_actually_contributes():
@@ -112,3 +208,74 @@ def test_segment_without_imu_samples_is_not_assessed():
     assert results
     assert all(result.flag is Flag.NOT_ASSESSED for result in results)
     assert all(result.notes for result in results)
+
+
+def test_longitudinal_accel_recovers_a_steady_deceleration():
+    frames, gps, imu = braking_route(v_start=28.0, v_end=8.0, length_m=300.0)
+    route = align_route(frames, gps, imu)
+    duration = 2.0 * 300.0 / (28.0 + 8.0)
+
+    accel = longitudinal_accel(route)
+
+    assert len(accel) == len(imu)
+    assert np.median(accel) == pytest.approx((8.0 - 28.0) / duration, rel=0.05)
+
+
+def test_braking_on_a_level_road_is_not_a_grade():
+    """The defect KITTI exposed: an accelerometer cannot tell braking from a slope.
+
+    Its longitudinal channel carries the vehicle's own acceleration on top of the
+    gravity projection, and a complementary filter does not separate them --
+    sustained braking sits inside the band the accelerometer anchors. Against
+    KITTI's INS ground truth this produced grades of -12 percent on a road whose
+    true maximum was about 5 percent, flagging five segments critical that were
+    not.
+    """
+    results = _analyse(*braking_route(grade_pct=0.0, v_start=28.0, v_end=8.0))
+
+    for result in results:
+        assert result.metrics["grade_pct"] == pytest.approx(0.0, abs=1.0)
+        assert result.flag is Flag.NORMAL
+
+
+def test_the_uncorrected_reading_would_have_flagged_that_road_critical():
+    """Pins that the previous test is not passing for a trivial reason.
+
+    Without the correction the same accelerometer reading yields a grade well
+    past the threshold, so the test above is checking real work.
+    """
+    _, _, imu = braking_route(grade_pct=0.0, v_start=28.0, v_end=8.0)
+    sample = imu[len(imu) // 2]
+
+    uncorrected_pct = (
+        np.tan(np.arctan2(-sample.ax, np.hypot(sample.ay, sample.az))) * 100.0
+    )
+
+    assert abs(uncorrected_pct) > load_config().grade.threshold_pct
+
+
+def test_a_real_grade_survives_braking_on_top_of_it():
+    """Correcting for the vehicle must not flatten a slope that is really there."""
+    results = _analyse(*braking_route(grade_pct=8.0, v_start=28.0, v_end=8.0))
+
+    assert results[0].metrics["grade_pct"] == pytest.approx(8.0, rel=0.05)
+    assert results[0].flag is Flag.CRITICAL
+
+
+def test_non_increasing_imu_timestamps_are_rejected():
+    """Differentiating speed needs strictly increasing time.
+
+    A duplicate timestamp divides by zero, and the NaN that follows compares
+    false against every threshold -- so the segment would report normal no
+    matter how steep it was.
+    """
+    frames, gps, imu = straight_route(length_m=200.0)
+    imu[5] = ImuSample(
+        timestamp_utc=imu[4].timestamp_utc,
+        ax=imu[5].ax, ay=imu[5].ay, az=imu[5].az,
+        gx=imu[5].gx, gy=imu[5].gy, gz=imu[5].gz,
+    )
+    route = align_route(frames, gps, imu)
+
+    with pytest.raises(ValueError, match="strictly increasing"):
+        pitch_series(route, load_config())

@@ -13,7 +13,10 @@ from irap_screening.io.schema import (
     BoxInstance,
     DetectionRecord,
     ExistenceResult,
+    Flag,
     LaneInstance,
+    ModuleResult,
+    Segment,
     Transform,
 )
 from irap_screening.modules.marking import analyse_marking, scan_near_lane_point, weber_blobs
@@ -163,23 +166,100 @@ def _build(tmp_path: Path, gray: np.ndarray, sign_cls: str | None):
     return route, segments, DetectionSet(lane=lane, sign=sign), cfg
 
 
+def _grade_results(segments: list[Segment], flag: Flag) -> list[ModuleResult]:
+    return [
+        ModuleResult(module="grade", segment_id=segment.segment_id, flag=flag)
+        for segment in segments
+    ]
+
+
 def test_double_line_present_is_reported(tmp_path: Path):
+    route, segments, detections, cfg = _build(tmp_path, _double_line_image(28), None)
     results = analyse_marking(
-        *_build(tmp_path, _double_line_image(28), None), image_root=tmp_path
+        route,
+        segments,
+        detections,
+        cfg,
+        image_root=tmp_path,
+        grade_results=_grade_results(segments, Flag.CRITICAL),
     )
     assert results[0].double_line.present is True
 
 
 def test_single_line_reports_no_double_line(tmp_path: Path):
+    route, segments, detections, cfg = _build(tmp_path, _single_line_image(), None)
     results = analyse_marking(
-        *_build(tmp_path, _single_line_image(), None), image_root=tmp_path
+        route,
+        segments,
+        detections,
+        cfg,
+        image_root=tmp_path,
+        grade_results=_grade_results(segments, Flag.CRITICAL),
     )
     assert results[0].double_line.present is False
 
 
+def test_double_line_scan_is_skipped_outside_a_critical_grade(tmp_path: Path):
+    """double_line.present only ever feeds gap-check's grade rule (Rule 2), so
+    scanning a segment whose grade is not critical can only produce a reading
+    nothing will ever consult -- and, per the false positives this guarded
+    against, a reading that can actively mislead a human reviewing the segment.
+    """
+    route, segments, detections, cfg = _build(tmp_path, _double_line_image(28), None)
+    results = analyse_marking(
+        route,
+        segments,
+        detections,
+        cfg,
+        image_root=tmp_path,
+        grade_results=_grade_results(segments, Flag.NORMAL),
+    )
+    assert results[0].double_line.present is False
+    assert results[0].double_line.evidence == []
+    assert results[0].double_line.assessed is False
+
+
+def test_double_line_scan_is_marked_assessed_on_a_critical_grade(tmp_path: Path):
+    """The viewer must be able to tell "checked, none found" apart from "never
+    checked" -- both currently read as present=False, and only this field
+    distinguishes them."""
+    route, segments, detections, cfg = _build(tmp_path, _single_line_image(), None)
+    results = analyse_marking(
+        route,
+        segments,
+        detections,
+        cfg,
+        image_root=tmp_path,
+        grade_results=_grade_results(segments, Flag.CRITICAL),
+    )
+    assert results[0].double_line.present is False
+    assert results[0].double_line.assessed is True
+
+
+def test_signs_are_still_collected_outside_a_critical_grade(tmp_path: Path):
+    """Only the double-line scan is grade-gated; signs feed other rules too."""
+    route, segments, detections, cfg = _build(tmp_path, _single_line_image(), "Bend")
+    results = analyse_marking(
+        route,
+        segments,
+        detections,
+        cfg,
+        image_root=tmp_path,
+        grade_results=_grade_results(segments, Flag.NORMAL),
+    )
+    assert any(result.signs for result in results)
+
+
 def test_sign_is_recorded_with_distance_along_route(tmp_path: Path):
     route, segments, detections, cfg = _build(tmp_path, _single_line_image(), "Bend")
-    results = analyse_marking(route, segments, detections, cfg, image_root=tmp_path)
+    results = analyse_marking(
+        route,
+        segments,
+        detections,
+        cfg,
+        image_root=tmp_path,
+        grade_results=_grade_results(segments, Flag.CRITICAL),
+    )
 
     signs = [sign for result in results for sign in result.signs]
     assert len(signs) == 1
@@ -193,8 +273,14 @@ def test_sign_is_recorded_with_distance_along_route(tmp_path: Path):
 
 def test_module_returns_existence_results_not_flags(tmp_path: Path):
     """Giving this module a flag would invite folding it into the rating."""
+    route, segments, detections, cfg = _build(tmp_path, _single_line_image(), None)
     results = analyse_marking(
-        *_build(tmp_path, _single_line_image(), None), image_root=tmp_path
+        route,
+        segments,
+        detections,
+        cfg,
+        image_root=tmp_path,
+        grade_results=_grade_results(segments, Flag.CRITICAL),
     )
     assert all(isinstance(r, ExistenceResult) for r in results)
     assert not any(hasattr(r, "flag") for r in results)

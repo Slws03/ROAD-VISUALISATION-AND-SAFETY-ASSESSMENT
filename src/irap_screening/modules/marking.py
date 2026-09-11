@@ -23,7 +23,9 @@ from irap_screening.io.schema import (
     BoxInstance,
     DoubleLineRecord,
     ExistenceResult,
+    Flag,
     LaneInstance,
+    ModuleResult,
     Segment,
     SignRecord,
 )
@@ -121,20 +123,31 @@ def analyse_marking(
     detections: DetectionSet,
     cfg: Settings,
     image_root: Path,
+    grade_results: list[ModuleResult],
 ) -> list[ExistenceResult]:
-    """Collect sign records and double-line presence for each segment."""
+    """Collect sign records and double-line presence for each segment.
+
+    The double-line scan only runs on a critical-grade segment: gap-check's
+    only use of double_line.present is as an alternative to a No-overtaking
+    sign on a critical grade (decision/gapcheck.py rule 2). Scanning anywhere
+    else spends the Weber-contrast pass -- inherently noisy against roadside
+    clutter such as a guardrail -- on segments where its answer is never
+    consulted and can only mislead someone reading the viewer's evidence.
+    """
     image_root = Path(image_root)
     frames_by_id = {frame.frame_id: frame for frame in route.frames}
     distance_by_id = {
         frame.frame_id: float(distance)
         for frame, distance in zip(route.frames, route.frame_dist_m, strict=False)
     }
+    grade_flag_by_segment = {result.segment_id: result.flag for result in grade_results}
 
     results: list[ExistenceResult] = []
     for segment in segments:
         signs: list[SignRecord] = []
         gaps: list[float] = []
         evidence: list[str] = []
+        scan_double_line = grade_flag_by_segment.get(segment.segment_id) is Flag.CRITICAL
 
         for frame_id in segment.frame_ids:
             sign_record = detections.sign.get(frame_id)
@@ -152,6 +165,9 @@ def analyse_marking(
                             at_m=distance_by_id.get(frame_id, 0.0),
                         )
                     )
+
+            if not scan_double_line:
+                continue
 
             lane_record = detections.lane.get(frame_id)
             frame = frames_by_id.get(frame_id)
@@ -178,6 +194,7 @@ def analyse_marking(
                 signs=signs,
                 double_line=DoubleLineRecord(
                     present=present,
+                    assessed=scan_double_line,
                     confidence=confidence if present else 0.0,
                     evidence=sorted(set(evidence)),
                 ),

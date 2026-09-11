@@ -30,13 +30,21 @@ def _main() -> None:
 
 
 RouteOption = typer.Option(..., "--route", help="Route directory to analyse.")
-OutOption = typer.Option(Path("out"), "--out", help="Output directory.")
+OutOption = typer.Option(
+    None, "--out", help="Output directory. Default: an out/ inside the route."
+)
 SetOption = typer.Option(None, "--set", help="Override a threshold, as key=value.")
 ProfileOption = typer.Option(None, "--config", help="Profile YAML overriding defaults.")
 RouteIdOption = typer.Option("R01", "--route-id", help="Identifier used in segment ids.")
 WeightsOption = typer.Option(..., "--weights", help="Path to the YOLO sign weight (.pt).")
 DeviceOption = typer.Option("cpu", "--device", help="Inference device, e.g. cpu or 0.")
 RawOption = typer.Option(..., "--raw", help="CLRerNet dump written by the Colab cell.")
+ViewOutOption = typer.Option(
+    None, "--out", help="Viewer output directory. Default: a view/ inside the route."
+)
+PortOption = typer.Option(8000, "--port", help="Port for the local viewer server.")
+NoServeOption = typer.Option(False, "--no-serve", help="Build the viewer, do not serve it.")
+NoOpenOption = typer.Option(False, "--no-open", help="Serve without opening a browser.")
 
 
 def _require_route(route: Path) -> Path:
@@ -50,13 +58,16 @@ def _require_route(route: Path) -> Path:
 @app.command(name="report")
 def report(
     route: Path = RouteOption,
-    out: Path = OutOption,
+    out: Path | None = OutOption,
     config: Path | None = ProfileOption,
     set_: list[str] | None = SetOption,
     route_id: str = RouteIdOption,
 ) -> None:
     """Run the full CPU layer and write report.json, segments.geojson and report.md."""
     route = _require_route(route)
+    # Default beside the data it describes: a fixed directory meant every route
+    # wrote to the same place and the last run replaced the rest.
+    out = out or route / "out"
     cfg = load_config(profile=config, overrides=set_)
     result = run_pipeline(route, cfg, route_id=route_id)
     write_report(out, result)
@@ -110,6 +121,57 @@ def import_lanes(
         typer.secho(str(error), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from error
     typer.echo(f"Wrote {out_path}")
+
+
+@app.command(name="view")
+def view(
+    route: Path = RouteOption,
+    out: Path | None = ViewOutOption,
+    config: Path | None = ProfileOption,
+    set_: list[str] | None = SetOption,
+    route_id: str = RouteIdOption,
+    port: int = PortOption,
+    no_serve: bool = NoServeOption,
+    no_open: bool = NoOpenOption,
+) -> None:
+    """Build and serve a local page for inspecting a route's results.
+
+    A verification tool: it puts each segment's flags next to the frames that
+    produced them, with the detections drawn on. It serves over HTTP rather than
+    writing a file to double-click because the page fetches its data, which the
+    browser refuses to do from a file:// URL.
+
+    --route may also name a directory of routes (each an immediate
+    subdirectory with its own frames.csv/gps.csv/imu.csv): every route found
+    is built, and the page gets a switcher to jump between them.
+    """
+    from irap_screening.view.export import discover_routes, export_routes, export_view, is_route_dir
+    from irap_screening.view.serve import serve_directory, serve_routes
+
+    route = _require_route(route)
+    out = out or route / "view"
+    cfg = load_config(profile=config, overrides=set_)
+
+    if is_route_dir(route):
+        out_dir = export_view(route, cfg, out, route_id=route_id)
+        typer.echo(f"Built {out_dir}")
+        if no_serve:
+            typer.echo(f"Serve it with: python -m http.server -d {out_dir}")
+            return
+        serve_directory(out_dir, route, port=port, open_browser=not no_open)
+        return
+
+    routes = discover_routes(route)
+    if not routes:
+        typer.secho(f"No routes found under: {route}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    out_dir = export_routes(routes, cfg, out)
+    typer.echo(f"Built {out_dir} ({len(routes)} route(s): {', '.join(sorted(routes))})")
+
+    if no_serve:
+        typer.echo(f"Serve it with: python -m http.server -d {out_dir}")
+        return
+    serve_routes(out_dir, routes, port=port, open_browser=not no_open)
 
 
 if __name__ == "__main__":

@@ -9,8 +9,14 @@ __pycache__/
 venv/
 *.egg-info/
 
-# Report output written by the documented quick start
-out/
+# Generated output: the report and the local viewer. Anchored with a
+# leading slash: a bare view/ would also swallow src/irap_screening/view/.
+/out/
+/view/
+/routes/
+# report and viewer output now defaults beside the route it describes
+fixtures/*/out/
+fixtures/*/view/
 
 # Data & model artifacts
 dataset/
@@ -27,3 +33,10 @@ runs/
 Thumbs.db
 .idea/
 .vscode/
+
+.worktrees/
+
+# Tool artifacts
+.codegraph/
+*.drawio.png
+.$*.drawio.png.bkp

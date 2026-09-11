@@ -16,7 +16,7 @@ rather than re-running inference.
 
 ```bash
 uv sync --extra dev
-uv run irap report --route fixtures/route_demo --out out
+uv run irap report --route fixtures/route_demo
 ```
 
 This runs the full decision layer against the committed fixture. No GPU, no
@@ -26,9 +26,10 @@ external data.
 
 | Command | Purpose |
 | --- | --- |
-| `irap report --route DIR --out DIR` | Full CPU layer; writes JSON, GeoJSON and Markdown |
+| `irap report --route DIR` | Full CPU layer; writes JSON, GeoJSON and Markdown into `DIR/out` |
 | `irap detect-signs --route DIR --weights W.pt` | Runs the YOLO sign detector; writes `detections/sign.jsonl` |
 | `irap import-lanes --route DIR --raw dump.json` | Converts a CLRerNet dump; writes `detections/lane.jsonl` |
+| `irap view --route DIR` | Builds and serves a local page for inspecting the results |
 
 `irap sweep`, `irap validate` and `irap config show` are designed but not yet
 implemented in this build.
@@ -42,6 +43,16 @@ optional extra so the CPU layer never installs torch:
 uv sync --extra runners
 uv run irap detect-signs --route DIR --weights path/to/best.pt
 ```
+
+`scripts/run_detectors.ps1` wraps both detectors and the report in one command:
+
+```powershell
+.\scripts\run_detectors.ps1 -Route D:\routes\kuching_01 -Report
+```
+
+It refuses to run without a CLRerNet dump unless `-SkipLanes` is passed, because
+a route with no `lane.jsonl` is not an error downstream -- it reads as a road
+with no markings anywhere and grades critical throughout.
 
 CPU inference is adequate for screening-rate imagery. The runner refuses to run
 against a weight whose class names are not exactly the five the decision layer
@@ -64,6 +75,20 @@ environment that cannot be reproduced. `tests/test_notebook_export.py` pins the
 two together: it executes the notebook's dump and overlay cells against stubs
 and fails if either drifts from the exporter.
 
+## Viewer
+
+`irap view` is a verification tool: it puts each segment's flags next to the
+frames that produced them, with the detections drawn on.
+
+```bash
+uv run irap view --route fixtures/route_demo
+```
+
+It builds `view/`, serves it on localhost and opens a browser. Arrow keys step
+through a segment's frames. Overlays are rendered in Python rather than on a
+canvas in the browser, so the coordinate arithmetic keeps a single tested
+implementation instead of a second, unwatched one in JavaScript.
+
 ## Configuration
 
 All thresholds live in `configs/default.yaml`. Override one inline:
@@ -71,6 +96,10 @@ All thresholds live in `configs/default.yaml`. Override one inline:
 ```bash
 uv run irap report --route fixtures/route_demo --set curvature.threshold_m=350
 ```
+
+Output defaults beside the data it describes -- `DIR/out` for the report,
+`DIR/view` for the viewer -- so two routes cannot overwrite each other. Pass
+`--out` to put it elsewhere.
 
 ## Modules
 

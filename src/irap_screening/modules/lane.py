@@ -7,6 +7,15 @@ corridor location, while contrast carries the severity banding.
 
 Note the comparison direction: lower contrast means a worse marking, the
 opposite of the curvature and grade thresholds.
+
+MODULE_NAME is "delineation", not "lane": this is the report-facing key
+gap-check and the viewer key their output on, and iRAP's Delineation
+attribute is what a reader will look for it under. It stays a partial
+match, not a false one -- this module only ever measures marking
+visibility, never the hazard-warning-sign half of the real attribute, and
+the viewer says so next to it. Everything internal to this file (the
+functions, cfg.lane.*, LaneInstance) keeps the more specific "lane"
+naming, since that is what it actually computes.
 """
 
 from __future__ import annotations
@@ -21,7 +30,9 @@ from irap_screening.io.align import AlignedRoute
 from irap_screening.io.detections import DetectionSet
 from irap_screening.io.schema import Flag, LaneInstance, ModuleResult, Segment
 
-MODULE_NAME = "lane"
+MODULE_NAME = "delineation"  # external/report key -- see module docstring;
+                              # internal names (analyse_lane, LaneInstance,
+                              # cfg.lane.*) stay lane-marking-specific.
 
 
 def weber_contrast_at(
@@ -56,12 +67,20 @@ def weber_contrast_at(
 
 
 def _grade(contrast: float, cfg: Settings) -> Flag:
-    """Lower contrast is worse, so the bands read downward."""
-    if contrast >= cfg.lane.weber_watch:
-        return Flag.NORMAL
-    if contrast >= cfg.lane.weber_urgent:
-        return Flag.WATCH
-    return Flag.CRITICAL
+    """Lower contrast is worse. Two bands, matching iRAP's Delineation
+    Adequate/Poor: no separate watch band -- a threshold for routing
+    borderline segments to manual/LLM review, if wanted later, can be tuned
+    independently of this flag rather than needing its own hard-coded band.
+    """
+    return Flag.NORMAL if contrast >= cfg.lane.weber_adequate else Flag.CRITICAL
+
+
+def irap_delineation_category(flag: Flag) -> int:
+    """iRAP Delineation descriptive category. Display only, mirrors the flag:
+    1 (Adequate) for Flag.NORMAL, 2 (Poor) for Flag.CRITICAL -- unlike
+    curvature/grade there is no independent numeric scale to derive from.
+    """
+    return 1 if flag is Flag.NORMAL else 2
 
 
 def analyse_lane(
@@ -101,8 +120,10 @@ def analyse_lane(
             )
             lanes = [lane for lane in lanes if lane.conf >= cfg.lane.clrernet_conf]
             if not lanes:
-                # No marking detected is the worst observable state, not a gap.
-                contrasts.append(0.0)
+                # A frame the detector could not resolve is not evidence that the
+                # road is unmarked. Scoring it as zero contrast and aggregating by
+                # the worst frame let one miss condemn a whole segment; sparse
+                # detection is handled once, per segment, below.
                 continue
 
             detected_frames += 1
@@ -123,33 +144,68 @@ def analyse_lane(
                     if value is not None
                 ]
                 if samples:
-                    contrasts.append(float(np.median(samples)))
+                    # A high percentile, not the median: see contrast_percentile
+                    # in the configuration for why a dashed marking demands it.
+                    contrasts.append(
+                        float(np.percentile(samples, cfg.lane.contrast_percentile))
+                    )
                     evidence.append(lane.id)
 
         total_frames = len(segment.frame_ids)
+        detection_rate = detected_frames / total_frames if total_frames else 0.0
+        if contrasts and detection_rate < cfg.lane.min_detection_rate:
+            results.append(
+                ModuleResult(
+                    module=MODULE_NAME,
+                    segment_id=segment.segment_id,
+                    flag=Flag.NOT_ASSESSED,
+                    metrics={
+                        "detection_rate": detection_rate,
+                        "detected_frames": float(detected_frames),
+                        "total_frames": float(total_frames),
+                    },
+                    notes=(
+                        f"Lane detection rate {detection_rate:.0%} is below the "
+                        f"{cfg.lane.min_detection_rate:.0%} floor; too little evidence "
+                        "to grade this segment either way."
+                    ),
+                    evidence=evidence,
+                )
+            )
+            continue
         if not contrasts:
             results.append(
                 ModuleResult(
                     module=MODULE_NAME,
                     segment_id=segment.segment_id,
                     flag=Flag.NOT_ASSESSED,
-                    metrics={"total_frames": float(total_frames)},
-                    notes="No usable imagery for this segment.",
+                    metrics={
+                        "detection_rate": detection_rate,
+                        "detected_frames": float(detected_frames),
+                        "total_frames": float(total_frames),
+                    },
+                    notes=(
+                        "No lane was detected anywhere in this segment. That is "
+                        "not the same as the road being unmarked, and CLRerNet's "
+                        "output cannot tell the two apart."
+                    ),
                 )
             )
             continue
 
         worst_contrast = float(min(contrasts))
+        flag = _grade(worst_contrast, cfg)
         results.append(
             ModuleResult(
                 module=MODULE_NAME,
                 segment_id=segment.segment_id,
-                flag=_grade(worst_contrast, cfg),
+                flag=flag,
                 metrics={
                     "weber_contrast": worst_contrast,
-                    "detection_rate": detected_frames / total_frames,
+                    "detection_rate": detection_rate,
                     "detected_frames": float(detected_frames),
                     "total_frames": float(total_frames),
+                    "irap_category": float(irap_delineation_category(flag)),
                 },
                 evidence=evidence,
             )

@@ -27,12 +27,37 @@ curvature:
 
 grade:
   threshold_pct: 7.5             # iRAP Grade Risk Factor boundary (provisional)
-  comp_filter_alpha: 0.98        # complementary filter: gyro weight
+  comp_filter_alpha: 0.98        # complementary filter: gyro weight.
+                                 # PROVISIONAL and measurably poor: against
+                                 # KITTI 0042's INS pitch, 0.98 gives 1.05 deg
+                                 # RMSE where 0.5-0.8 give 0.30-0.32. This
+                                 # module's gyro branch has no bias correction
+                                 # (curvature's does), so a heavy gyro weight
+                                 # lets drift accumulate. Left unchanged: one
+                                 # drive is no basis for retuning a default.
 
 lane:
   clrernet_conf: 0.41            # CLRerNet official default
-  weber_watch: 0.35              # provisional contrast band boundary
-  weber_urgent: 0.20             # provisional contrast band boundary
+  contrast_percentile: 85        # PROVISIONAL. Summarises a lane by a high
+                                 # percentile of its samples, not the median.
+                                 # CLRerNet returns points along the line's path,
+                                 # so a dashed marking is sampled through its
+                                 # gaps: over half the points measure asphalt and
+                                 # the median reports a healthy line as invisible.
+                                 # A uniformly worn line is faint at every point,
+                                 # so a high percentile stays faint.
+  min_detection_rate: 0.5        # PROVISIONAL. Below this share of frames
+                                 # carrying an accepted lane, the segment is
+                                 # not_assessed: too little evidence to grade the
+                                 # road, and a detector limitation must not be
+                                 # reported as a road defect.
+  weber_adequate: 0.35           # PROVISIONAL. Two bands, not three: iRAP's
+                                 # Delineation is Adequate/Poor, and this
+                                 # project keeps only its own equivalent
+                                 # (lane marking visibility, not the full
+                                 # attribute -- it does not cover hazard
+                                 # warning signs, a known gap). contrast >=
+                                 # this reads adequate; below it, poor.
   bg_window: 81                  # background window for contrast sampling
 
 doubleline:                      # from the doubleline_coord_scan experiment

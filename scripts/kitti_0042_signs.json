@@ -1,0 +1,75 @@
+{
+  "_comment": "Synthetic signage for KITTI 2011_10_03_drive_0042 at 1 Hz sampling. Frame ids are sequential; source_frame in frames.csv maps back to the KITTI index. The advance bend sign spans 1830-1878 m, inside the 1870 m +-50 window gap-check uses for the curve entering at 2100 m (JKR 230 m placement). Chevrons run through segments 21-24, the sustained left-hand curve.",
+  "signs": {
+    "bend": {
+      "image": "../assets/signs/bend.png",
+      "mask": "diamond"
+    },
+    "chevron": {
+      "image": "../assets/signs/chevron.png",
+      "mask": "none"
+    }
+  },
+  "placements": [
+    {
+      "sign": "bend",
+      "_where": "approached between 1830 and 1878 m; grows as the vehicle closes",
+      "frames": [
+        75,
+        76,
+        77
+      ],
+      "start": {
+        "x": 1095,
+        "y": 194,
+        "h": 22
+      },
+      "end": {
+        "x": 1195,
+        "y": 178,
+        "h": 76
+      }
+    },
+    {
+      "sign": "chevron",
+      "_where": "outside of the curve, one per frame (about 22 m apart) in segments 21-24",
+      "frames": [
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112
+      ],
+      "start": {
+        "x": 1000,
+        "y": 200,
+        "h": 70
+      },
+      "end": {
+        "x": 1000,
+        "y": 200,
+        "h": 70
+      }
+    }
+  ]
+}

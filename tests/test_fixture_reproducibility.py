@@ -23,7 +23,7 @@ def test_fixture_runs_end_to_end_without_a_gpu():
 def test_fixture_exercises_every_scoring_module():
     report = run_pipeline(FIXTURE, load_config(), route_id="DEMO")
     first = report["segments"][0]
-    for module in ("curvature", "grade", "lane", "condition"):
+    for module in ("curvature", "grade", "delineation", "condition"):
         assert "flag" in first[module]
 
 

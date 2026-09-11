@@ -1,0 +1,774 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iRAP screening viewer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f26;
+    --line: #2c313b;
+    --text: #e6e8ec;
+    --muted: #949bab;
+    --normal: #3fb950;
+    --watch: #d29922;
+    --critical: #f85149;
+    --unassessed: #6e7681;
+    --surface2: #262b35;
+    --surface2-hover: #323847;
+    --hover: #232730;
+    --active-bg: #2b3040;
+    --map-bg: #0f1114;
+    --rec-bg: #21242c;
+    --border2: #4b5468;
+    --border2-hover: #6a7284;
+    --gap: #a371f7;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --line: #e2e4ea;
+    --text: #1b1e24;
+    --muted: #6b7280;
+    --normal: #1a7f37;
+    --watch: #9a6700;
+    --critical: #cf222e;
+    --unassessed: #6e7681;
+    --surface2: #eceef2;
+    --surface2-hover: #dde1e8;
+    --hover: #eef1f5;
+    --active-bg: #dfe4ee;
+    --map-bg: #e5e7eb;
+    --rec-bg: #f6f7f9;
+    --border2: #c7ccd6;
+    --border2-hover: #98a0ae;
+    --gap: #8250df;
+  }
+  * { box-sizing: border-box; }
+  body {
+    /* Without overflow:hidden the window scrolls instead of the panels, which
+       breaks scroll preservation when stepping frames and drags the sidebar
+       off-screen. */
+    margin: 0; height: 100vh; overflow: hidden; display: flex; padding: 14px;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  }
+  #app {
+    flex: 1; display: flex; min-width: 0; min-height: 0;
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  }
+  aside {
+    width: 340px; flex: none; display: flex; flex-direction: column;
+    border-right: 1px solid var(--line); background: var(--panel); min-width: 0;
+  }
+  header {
+    padding: 14px 16px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+  }
+  #title-block { min-width: 0; flex: 1; }
+  h1 { margin: 0 0 2px; font-size: 15px; }
+  .sub { color: var(--muted); font-size: 12px; }
+  #theme-toggle { flex: none; padding: 5px; display: flex; }
+  #route-select {
+    display: none; margin-top: 8px; width: 100%;
+    background: var(--surface2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 4px; padding: 4px 8px; font: inherit;
+  }
+  #coverage { padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 12px; }
+  #coverage span { color: var(--muted); }
+  #segment-filters {
+    padding: 8px 16px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .chip {
+    background: transparent; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; font: inherit;
+  }
+  .chip.critical.active { background: var(--critical); border-color: var(--critical); color: #fff; }
+  .chip.gap.active { background: var(--gap); border-color: var(--gap); color: #fff; }
+  #filter-status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  #segments { flex: 1; overflow-y: auto; }
+  .seg {
+    padding: 9px 16px; border-bottom: 1px solid var(--line);
+    border-left: 3px solid transparent;
+    cursor: pointer; display: flex; align-items: center; gap: 9px;
+  }
+  .seg:hover { background: var(--hover); }
+  .seg.active { background: var(--active-bg); }
+  /* A gap-check recommendation is a missing mitigation, not an attribute
+     severity -- a distinct accent color and a border (not a dot) keeps it
+     from being read as another module flag. */
+  .seg.has-gap { border-left-color: var(--gap); }
+  .seg .id { font-variant-numeric: tabular-nums; }
+  .seg .range { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .dot.normal { background: var(--normal); }
+  .dot.watch { background: var(--watch); }
+  .dot.critical { background: var(--critical); }
+  .dot.not_assessed { background: var(--unassessed); }
+  #map {
+    height: 220px; flex: none; border-top: 1px solid var(--line);
+    background: var(--map-bg); position: relative;
+  }
+  #map-grip {
+    position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+    z-index: 1000; cursor: nesw-resize; border-radius: 4px;
+    background: var(--surface2); border: 1px solid var(--border2); color: var(--text);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .5);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #map-grip:hover, #map-grip.active { background: var(--surface2-hover); border-color: var(--border2-hover); }
+  main { flex: 1; overflow-y: auto; padding: 20px 24px; }
+  .empty { color: var(--muted); margin-top: 40px; text-align: center; }
+  figure { margin: 0 0 16px; }
+  .frame-wrap {
+    position: relative; max-width: 900px; overflow: hidden;
+    border: 1px solid var(--line); border-radius: 4px; background: #000;
+  }
+  .frame-wrap img { width: 100%; display: block; }
+  .frame-wrap .overlay {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  figcaption {
+    display: flex; align-items: center; gap: 12px;
+    margin-top: 8px; color: var(--muted); font-size: 12px;
+  }
+  button {
+    background: var(--surface2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 4px; padding: 4px 11px; cursor: pointer; font: inherit;
+  }
+  button:disabled { opacity: .4; cursor: default; }
+  table { border-collapse: collapse; width: 100%; max-width: 900px; margin-bottom: 18px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.flag { font-weight: 600; }
+  td.flag.normal { color: var(--normal); }
+  td.flag.watch { color: var(--watch); }
+  td.flag.critical { color: var(--critical); }
+  td.flag.not_assessed { color: var(--unassessed); }
+  .metrics { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .rec {
+    border-left: 3px solid var(--critical); background: var(--rec-bg);
+    padding: 10px 14px; margin-bottom: 10px; max-width: 900px; border-radius: 0 4px 4px 0;
+  }
+  .rec .rule { font-weight: 600; }
+  .rec .detail { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  h2 { font-size: 13px; color: var(--muted); font-weight: 500;
+       text-transform: uppercase; letter-spacing: .04em; margin: 22px 0 8px; }
+  code { background: var(--surface2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="app">
+<aside>
+  <header>
+    <div id="title-block">
+      <h1 id="route">Loading…</h1>
+      <div class="sub" id="generated"></div>
+      <select id="route-select" title="Switch route"></select>
+    </div>
+    <button id="theme-toggle" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">
+      <svg id="theme-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
+    </button>
+  </header>
+  <div id="coverage"></div>
+  <div id="segment-filters">
+    <button class="chip critical" data-filter="critical">Critical</button>
+    <button class="chip gap" data-filter="gap">Gap</button>
+    <span id="filter-status"></span>
+  </div>
+  <div id="segments"></div>
+  <div id="map">
+    <div id="map-grip" title="Drag to resize map">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+           stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 3 21 3 21 9"></polyline>
+        <polyline points="9 21 3 21 3 15"></polyline>
+        <line x1="21" y1="3" x2="14" y2="10"></line>
+        <line x1="3" y1="21" x2="10" y2="14"></line>
+      </svg>
+    </div>
+  </div>
+</aside>
+<main><div class="empty" id="main-empty">Select a segment.</div></main>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const MODULES = ["curvature", "grade", "delineation", "condition"];
+const FLAG_COLOR = {
+  normal: "#3fb950", watch: "#d29922",
+  critical: "#f85149", not_assessed: "#6e7681",
+};
+
+const THEME_KEY = "irap-view-theme";
+// Feather-style sun/moon icons: the icon shown is what clicking it switches
+// *to*, so a moon shows while light and a sun shows while dark.
+const THEME_ICON = {
+  dark: `<circle cx="12" cy="12" r="4"></circle>
+    <line x1="12" y1="2" x2="12" y2="4"></line><line x1="12" y1="20" x2="12" y2="22"></line>
+    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+    <line x1="2" y1="12" x2="4" y2="12"></line><line x1="20" y1="12" x2="22" y2="12"></line>
+    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>`,
+  light: `<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>`,
+};
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.getElementById("theme-icon").innerHTML = THEME_ICON[theme];
+  localStorage.setItem(THEME_KEY, theme);
+}
+
+function setupThemeToggle() {
+  const stored = localStorage.getItem(THEME_KEY);
+  const preferred = stored
+    || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  applyTheme(preferred);
+  document.getElementById("theme-toggle").addEventListener("click", () => {
+    applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  });
+}
+setupThemeToggle();
+
+let data = null;
+let selected = null;
+let frameIndex = 0;
+let map = null;
+let layers = {};
+let laneByFrame = new Map();
+let signByFrame = new Map();
+let routeList = [];
+let currentRoute = null;
+
+// Frame images and detection files live under the route's own directory,
+// which a multi-route export scopes behind a /<route_id>/ URL segment (see
+// serve.py's _resolve_multi_path). A single-route export has no such
+// segment, so the prefix is empty and paths resolve exactly as before.
+function routePrefix() {
+  return currentRoute ? `${currentRoute}/` : "";
+}
+
+// The worst flag across the modules is what the list dot shows: a segment is as
+// bad as its worst attribute, which is how iRAP aggregates within a unit.
+const SEVERITY = ["not_assessed", "normal", "watch", "critical"];
+function worstFlag(segment) {
+  let worst = "not_assessed";
+  for (const module of MODULES) {
+    const flag = segment[module] && segment[module].flag;
+    if (flag && SEVERITY.indexOf(flag) > SEVERITY.indexOf(worst)) worst = flag;
+  }
+  return worst;
+}
+
+// The list dot only shows the worst flag; this fills in which module(s) it
+// came from as a hover tooltip -- plain text, so it scales to however many
+// modules the pipeline grows to without adding more indicators to the row.
+function flagSummary(segment) {
+  return MODULES.map((module) => {
+    const flag = (segment[module] && segment[module].flag) ?? "not_assessed";
+    return `${module}: ${flag}`;
+  }).join(" · ");
+}
+
+function metricsOf(entry) {
+  return Object.entries(entry)
+    .filter(([key, value]) => key !== "flag" && key !== "notes" && key !== "irap_category"
+                              && typeof value === "number")
+    .map(([key, value]) => `${key}=${Number(value.toFixed(3))}`)
+    .join("  ");
+}
+
+// iRAP's own descriptive band tables (Coding Manual). Display only -- these
+// labels are read straight off entry.irap_category, which the Python layer
+// already computed and tested; this is string formatting, not re-derivation.
+const IRAP_CURVATURE_LABELS = {
+  1: "1 - straight/gently curving (>800 m)",
+  2: "2 - moderate (400-800 m)",
+  3: "3 - sharp (200-400 m)",
+  4: "4 - very sharp (<200 m)",
+};
+const IRAP_GRADE_LABELS = {
+  1: "1 - flat/gentle (<7.5%)",
+  4: "4 - moderate (7.5-<10%)",
+  5: "5 - steep (>=10%)",
+};
+// Delineation has no independent numeric scale like curvature/grade's radius
+// or percentage bands -- its code mirrors the flag one-for-one (see
+// irap_delineation_category in lane.py). "lane marking:" qualifies it down
+// to the part actually measured; iRAP's Delineation also covers hazard
+// warning signs, which this project does not assess.
+const IRAP_DELINEATION_LABELS = {
+  1: "1 - lane marking: adequate",
+  2: "2 - lane marking: poor",
+};
+
+function irapCategoryLabel(module, entry) {
+  if (module === "curvature" && entry.irap_category != null) {
+    return IRAP_CURVATURE_LABELS[entry.irap_category] ?? "-";
+  }
+  if (module === "grade" && entry.irap_category != null) {
+    return IRAP_GRADE_LABELS[entry.irap_category] ?? "-";
+  }
+  if (module === "delineation" && entry.irap_category != null) {
+    return IRAP_DELINEATION_LABELS[entry.irap_category] ?? "-";
+  }
+  return "-";
+}
+
+// generated_at is stored in UTC (report.py's own source of truth); the
+// sidebar shows it in Malaysia time (UTC+8, no DST) since that is where this
+// project is run and read.
+function formatGeneratedAt(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kuala_Lumpur",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).formatToParts(date).reduce((acc, part) => ({ ...acc, [part.type]: part.value }), {});
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} UTC+8`;
+}
+
+// Chips are additive (OR): "problems only" usually means critical OR watch
+// OR a missing mitigation, not an intersection of all three at once.
+const activeFilters = new Set();
+
+function segmentHasGap(segment) {
+  return Boolean(segment.recommendations && segment.recommendations.length);
+}
+
+function segmentMatchesFilters(segment) {
+  if (activeFilters.size === 0) return true;
+  return activeFilters.has(worstFlag(segment))
+    || (activeFilters.has("gap") && segmentHasGap(segment));
+}
+
+function renderSegmentList() {
+  document.getElementById("segments").innerHTML = data.segments.map((segment, i) => {
+    if (!segmentMatchesFilters(segment)) return "";
+    const flag = worstFlag(segment);
+    const start = Math.round(segment.start_m), end = Math.round(segment.end_m);
+    const hasGap = segmentHasGap(segment);
+    return `<div class="seg${hasGap ? " has-gap" : ""}" data-i="${i}" title="${flagSummary(segment)}">`
+         + `<span class="dot ${flag}"></span>`
+         + `<span class="id">${segment.segment_id}</span>`
+         + `<span class="range">${start}-${end} m</span></div>`;
+  }).join("");
+
+  document.querySelectorAll(".seg").forEach((node) => {
+    node.addEventListener("click", () => select(Number(node.dataset.i)));
+  });
+
+  const status = document.getElementById("filter-status");
+  if (activeFilters.size === 0) {
+    status.textContent = "";
+  } else {
+    const shown = data.segments.filter(segmentMatchesFilters).length;
+    status.textContent = `${shown} of ${data.segments.length}`;
+  }
+}
+
+document.querySelectorAll("#segment-filters .chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    const key = chip.dataset.filter;
+    if (activeFilters.has(key)) activeFilters.delete(key); else activeFilters.add(key);
+    chip.classList.toggle("active");
+    renderSegmentList();
+  });
+});
+
+function renderSidebar() {
+  document.getElementById("route").textContent = `Route ${data.route_id}`;
+  document.getElementById("generated").textContent =
+    `${data.segments.length} segments · ${formatGeneratedAt(data.generated_at)}`;
+
+  document.getElementById("coverage").innerHTML = MODULES.map((module) => {
+    const cov = (data.coverage && data.coverage[module]) || {};
+    const total = cov.total ?? 0;
+    const missing = cov.not_assessed ?? 0;
+    return `<div>${module} <span>${total - missing} of ${total} assessed`
+         + (missing ? `, ${missing} not assessed` : "") + `</span></div>`;
+  }).join("");
+
+  renderSegmentList();
+}
+
+function renderMap() {
+  // Switching routes calls this again on the same #map element; Leaflet
+  // refuses to re-initialize a container it already owns, so the old
+  // instance has to go first.
+  if (map) {
+    map.remove();
+    map = null;
+  }
+  layers = {};
+  document.getElementById("map").style.display = "";
+
+  const points = data.segments.flatMap((s) => [s.start_latlon, s.end_latlon]);
+  if (!points.length || typeof L === "undefined") {
+    // Leaflet comes from a CDN; with no network the map is simply absent and
+    // everything else still works.
+    document.getElementById("map").style.display = "none";
+    return;
+  }
+  map = L.map("map", { attributionControl: false });
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 })
+    .addTo(map);
+  // Small white dots at each segment boundary make the 100 m breakpoints
+  // visible against the colored route line, which otherwise reads as one
+  // continuous strip.
+  const boundaryMarker = (latlon) => L.circleMarker(latlon, {
+    radius: 4, color: "#0f1114", weight: 1.5, fillColor: "#fff", fillOpacity: 1,
+  }).addTo(map);
+  data.segments.forEach((segment, i) => {
+    const line = L.polyline([segment.start_latlon, segment.end_latlon], {
+      color: FLAG_COLOR[worstFlag(segment)], weight: 5,
+    }).addTo(map);
+    line.bindTooltip(
+      `${segment.segment_id} · ${Math.round(segment.start_m)}-${Math.round(segment.end_m)} m`,
+      { sticky: true },
+    );
+    line.on("click", () => select(i));
+    layers[i] = line;
+    boundaryMarker(segment.start_latlon);
+  });
+  boundaryMarker(data.segments[data.segments.length - 1].end_latlon);
+  map.fitBounds(L.latLngBounds(points).pad(0.2));
+}
+
+function moduleRows(segment) {
+  return MODULES.map((module) => {
+    const entry = segment[module] || {};
+    const detail = entry.notes ? entry.notes : metricsOf(entry);
+    // "delineation" alone would read as the full iRAP attribute; this
+    // module only ever measures the marking half of it (see
+    // irapCategoryLabel), so the row label says so up front.
+    const label = module === "delineation" ? "delineation (marking only)" : module;
+    return `<tr><td>${label}</td>`
+         + `<td class="flag ${entry.flag}">${entry.flag ?? "-"}</td>`
+         + `<td class="metrics">${irapCategoryLabel(module, entry)}</td>`
+         + `<td class="metrics">${detail}</td></tr>`;
+  }).join("");
+}
+
+function doubleLineText(dl) {
+  // The scan only runs on a critical-grade segment (gap-check's only use of
+  // this value), so present=false is ambiguous without assessed: it means
+  // either "scanned, none found" or "never scanned here".
+  if (dl.assessed === false) return "not checked (grade not critical)";
+  if (dl.present) return `present (confidence ${dl.confidence.toFixed(2)})`;
+  return "absent";
+}
+
+function signsBlock(segment) {
+  if (!segment.signs || !segment.signs.length) {
+    const dl = segment.double_line || {};
+    return `<p class="metrics">No signs accepted in this segment. `
+         + `Double line: ${doubleLineText(dl)}`
+         + `</p>`;
+  }
+  return `<table><tr><th>class</th><th>conf</th><th>at</th></tr>`
+       + segment.signs.map((sign) =>
+           `<tr><td>${sign.cls}</td><td class="metrics">${sign.conf.toFixed(2)}</td>`
+         + `<td class="metrics">${Math.round(sign.at_m)} m</td></tr>`).join("")
+       + `</table>`;
+}
+
+function recommendationsBlock(segment) {
+  if (!segment.recommendations || !segment.recommendations.length) {
+    return `<p class="metrics">No gap found: every matching mitigation is present.</p>`;
+  }
+  return segment.recommendations.map((rec) =>
+    `<div class="rec"><div class="rule">${rec.priority} · ${rec.rule}</div>`
+  + `<div class="detail">${rec.text}</div>`
+  + `<div class="detail">missing: ${rec.missing.join(", ") || "-"} · `
+  + `present: ${rec.present.join(", ") || "-"}</div></div>`).join("");
+}
+
+const LANE_COLOR = "#3fb950";
+const SIGN_COLOR = "#d29922";
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function inFrame(x, y, width, height) {
+  return x >= 0 && x < width && y >= 0 && y < height;
+}
+
+// Off-frame points are dropped rather than clamped. CLRerNet extends curved
+// lanes past the image edge, and a clamped point would draw a marking along
+// the border that was never detected there.
+function drawLanes(svg, record, width, height) {
+  for (const instance of record.instances) {
+    const points = instance.points.filter(([x, y]) => inFrame(x, y, width, height));
+    if (points.length === 1) {
+      const [x, y] = points[0];
+      const circle = document.createElementNS(SVG_NS, "circle");
+      circle.setAttribute("cx", x);
+      circle.setAttribute("cy", y);
+      circle.setAttribute("r", 4);
+      circle.setAttribute("fill", LANE_COLOR);
+      svg.appendChild(circle);
+    } else if (points.length > 1) {
+      const polyline = document.createElementNS(SVG_NS, "polyline");
+      polyline.setAttribute("points", points.map(([x, y]) => `${x},${y}`).join(" "));
+      polyline.setAttribute("fill", "none");
+      polyline.setAttribute("stroke", LANE_COLOR);
+      polyline.setAttribute("stroke-width", 3);
+      polyline.setAttribute("vector-effect", "non-scaling-stroke");
+      svg.appendChild(polyline);
+    }
+  }
+}
+
+// The class string is what gap-check matches on, so it is shown with the
+// confidence that decided whether it was accepted at all.
+function drawSigns(svg, record, width) {
+  const fontSize = Math.max(12, width / 64);
+  for (const instance of record.instances) {
+    const [x1, y1, x2, y2] = instance.bbox;
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    const w = Math.abs(x2 - x1);
+    const h = Math.abs(y2 - y1);
+    const rect = document.createElementNS(SVG_NS, "rect");
+    rect.setAttribute("x", x);
+    rect.setAttribute("y", y);
+    rect.setAttribute("width", w);
+    rect.setAttribute("height", h);
+    rect.setAttribute("fill", "none");
+    rect.setAttribute("stroke", SIGN_COLOR);
+    rect.setAttribute("stroke-width", 3);
+    rect.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.appendChild(rect);
+
+    const label = document.createElementNS(SVG_NS, "text");
+    label.setAttribute("x", x);
+    label.setAttribute("y", Math.max(y - 6, 12));
+    label.setAttribute("fill", SIGN_COLOR);
+    label.setAttribute("font-size", fontSize);
+    label.textContent = `${instance.cls || "?"} ${instance.conf.toFixed(2)}`;
+    svg.appendChild(label);
+  }
+}
+
+function drawOverlay(svg, width, height, frameId) {
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.innerHTML = "";
+  const lane = laneByFrame.get(frameId);
+  if (lane) drawLanes(svg, lane, width, height);
+  const sign = signByFrame.get(frameId);
+  if (sign) drawSigns(svg, sign, width);
+}
+
+// Stepping frames swaps the image in place rather than rebuilding the panel.
+// Rebuilding scrolls back to the top, and restoring scrollTop afterwards does
+// not work: the new image has not loaded yet, so the panel is momentarily too
+// short and the assignment is clamped.
+function showFrame() {
+  const frames = data.segments[selected].frame_ids || [];
+  const image = document.getElementById("frame-img");
+  const overlay = document.getElementById("frame-overlay");
+  if (!image || !overlay) return;
+  const frameId = frames[frameIndex];
+  image.onload = () => drawOverlay(overlay, image.naturalWidth, image.naturalHeight, frameId);
+  image.src = routePrefix() + data.frames[frameId];
+  image.alt = frameId;
+  document.getElementById("frame-caption").innerHTML =
+    `<code>${frameId}</code> · frame ${frameIndex + 1} of ${frames.length}`;
+  document.getElementById("prev").disabled = frameIndex === 0;
+  document.getElementById("next").disabled = frameIndex >= frames.length - 1;
+}
+
+function step(delta) {
+  const frames = data.segments[selected].frame_ids || [];
+  const next = frameIndex + delta;
+  if (next < 0 || next >= frames.length) return;
+  frameIndex = next;
+  showFrame();
+}
+
+function renderDetail() {
+  const segment = data.segments[selected];
+  const frames = segment.frame_ids || [];
+  document.querySelector("main").innerHTML = `
+    <h2>Evidence</h2>
+    ${frames.length
+      ? `<figure>
+           <div class="frame-wrap">
+             <img id="frame-img" alt="">
+             <svg id="frame-overlay" class="overlay"></svg>
+           </div>
+           <figcaption>
+             <button id="prev">&larr;</button>
+             <button id="next">&rarr;</button>
+             <span id="frame-caption"></span>
+             <span>green = lane points, amber = signs</span>
+           </figcaption>
+         </figure>`
+      : `<p class="metrics">No frames fall within this segment.</p>`}
+    <h2>${segment.segment_id} · ${Math.round(segment.start_m)}-${Math.round(segment.end_m)} m</h2>
+    <table><tr><th>module</th><th>flag</th><th>iRAP category</th><th>metrics</th></tr>
+      ${moduleRows(segment)}</table>
+    <h2>Signs and markings</h2>
+    ${signsBlock(segment)}
+    <h2>Recommendations</h2>
+    ${recommendationsBlock(segment)}
+  `;
+  if (frames.length) {
+    document.getElementById("prev").addEventListener("click", () => step(-1));
+    document.getElementById("next").addEventListener("click", () => step(1));
+    showFrame();
+  }
+}
+
+function select(index) {
+  selected = index;
+  frameIndex = 0;
+  document.querySelectorAll(".seg").forEach((node) =>
+    node.classList.toggle("active", Number(node.dataset.i) === index));
+  if (map && layers[index]) map.fitBounds(layers[index].getBounds().pad(1.5));
+  renderDetail();
+}
+
+// One grip in the map's top-right corner drives both dimensions: sidebar
+// width grows from its left edge (fixed at the window edge), map height
+// grows from its bottom edge (fixed at the bottom of the sidebar). Moving
+// the mouse along only one axis leaves the other dimension unchanged, so a
+// straight drag resizes just width or just height, and a diagonal drag
+// resizes both. Leaflet caches its container size, so nudge it after each
+// change or the tiles misalign.
+function setupResizeHandles() {
+  const sidebar = document.querySelector("aside");
+  const mapEl = document.getElementById("map");
+  const grip = document.getElementById("map-grip");
+  let dragging = false;
+
+  function onMove(event) {
+    if (!dragging) return;
+    const width = Math.min(Math.max(event.clientX, 260), window.innerWidth - 320);
+    const height = Math.min(Math.max(sidebar.getBoundingClientRect().bottom - event.clientY, 120), 600);
+    sidebar.style.width = `${width}px`;
+    mapEl.style.height = `${height}px`;
+    if (map) map.invalidateSize();
+  }
+
+  function onUp() {
+    if (!dragging) return;
+    dragging = false;
+    grip.classList.remove("active");
+    document.body.style.cursor = "";
+  }
+
+  grip.addEventListener("mousedown", (event) => {
+    dragging = true;
+    grip.classList.add("active");
+    document.body.style.cursor = "nesw-resize";
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
+document.addEventListener("keydown", (event) => {
+  if (selected === null) return;
+  if (event.key === "ArrowLeft") step(-1);
+  if (event.key === "ArrowRight") step(1);
+});
+
+function parseJsonl(text) {
+  const map = new Map();
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const record = JSON.parse(trimmed);
+    map.set(record.frame_id, record);
+  }
+  return map;
+}
+
+// A missing file (no sign detector run yet, say) is a valid state: it reads
+// as an empty map, the same way load_detections() in Python treats a
+// missing path as {} rather than an error.
+function fetchJsonl(path) {
+  return fetch(path)
+    .then((response) => (response.ok ? response.text() : ""))
+    .then(parseJsonl);
+}
+
+const ROUTE_KEY = "irap-view-route";
+
+function renderRouteSwitcher() {
+  const select = document.getElementById("route-select");
+  // A single-route export never wrote routes.json, so there is nothing to
+  // switch between; a scanned directory of exactly one route still could,
+  // but showing a one-item switcher would just be noise.
+  if (routeList.length < 2) {
+    select.style.display = "none";
+    return;
+  }
+  select.style.display = "block";
+  select.innerHTML = routeList
+    .map((route) => `<option value="${route.id}">${route.label}</option>`)
+    .join("");
+  select.value = currentRoute;
+}
+
+function loadRoute(routeId) {
+  currentRoute = routeId;
+  if (routeId) localStorage.setItem(ROUTE_KEY, routeId);
+  renderRouteSwitcher();
+
+  const prefix = routePrefix();
+  return Promise.all([
+    fetch(`${prefix}data.json`).then((response) => response.json()),
+    fetchJsonl(`${prefix}detections/lane.jsonl`),
+    fetchJsonl(`${prefix}detections/sign.jsonl`),
+  ]).then(([payload, laneMap, signMap]) => {
+    data = payload;
+    laneByFrame = laneMap;
+    signByFrame = signMap;
+    selected = null;
+    frameIndex = 0;
+    renderSidebar();
+    renderMap();
+    if (data.segments.length) {
+      select(0);
+    } else {
+      document.querySelector("main").innerHTML =
+        '<div class="empty" id="main-empty">Select a segment.</div>';
+    }
+  });
+}
+
+document.getElementById("route-select").addEventListener("change", (event) => {
+  loadRoute(event.target.value);
+});
+
+// routes.json exists only for a scanned directory of routes; a single-route
+// export has no such file, and 404/network failure both read the same way
+// here -- fall back to loading the page's own data.json directly.
+fetch("routes.json")
+  .then((response) => (response.ok ? response.json() : null))
+  .then((routes) => {
+    routeList = Array.isArray(routes) && routes.length ? routes : [];
+    const stored = localStorage.getItem(ROUTE_KEY);
+    const initial = routeList.length
+      ? (routeList.find((route) => route.id === stored) || routeList[0]).id
+      : null;
+    setupResizeHandles();
+    return loadRoute(initial);
+  })
+  .catch((error) => {
+    document.getElementById("main-empty").textContent =
+      "Could not load data.json - open this page through the local server "
+      + "(irap view), not by double-clicking the file. " + error;
+  });
+</script>
+</body>
+</html>

@@ -7,7 +7,11 @@ import pytest
 from irap_screening.config import load_config
 from irap_screening.io.align import align_route
 from irap_screening.io.schema import Flag
-from irap_screening.modules.curvature import analyse_curvature, estimate_gyro_bias
+from irap_screening.modules.curvature import (
+    analyse_curvature,
+    estimate_gyro_bias,
+    irap_curvature_category,
+)
 from irap_screening.segment import build_segments
 from tests.factories import curved_route, straight_route
 
@@ -29,6 +33,23 @@ def test_known_radius_is_recovered_within_five_percent():
     results, _ = _analyse(*curved_route(radius_m=312.5, arc_length_m=300.0))
     assert results, "expected at least one segment"
     assert results[0].metrics["radius_m"] == pytest.approx(312.5, rel=0.05)
+
+
+def test_irap_curvature_category_boundaries():
+    """iRAP Curvature Risk Factor: >=800->1, 400-800->2, 200-400->3, <200->4."""
+    assert irap_curvature_category(1000.0) == 1
+    assert irap_curvature_category(800.0) == 1
+    assert irap_curvature_category(799.9) == 2
+    assert irap_curvature_category(400.0) == 2
+    assert irap_curvature_category(399.9) == 3
+    assert irap_curvature_category(200.0) == 3
+    assert irap_curvature_category(199.9) == 4
+    assert irap_curvature_category(50.0) == 4
+
+
+def test_analysis_reports_the_irap_category():
+    results, _ = _analyse(*curved_route(radius_m=312.5, arc_length_m=300.0))
+    assert results[0].metrics["irap_category"] == 3
 
 
 def test_radius_below_threshold_is_critical():
