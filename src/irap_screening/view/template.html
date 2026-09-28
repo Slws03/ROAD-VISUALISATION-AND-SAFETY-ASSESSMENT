@@ -508,7 +508,9 @@ function inFrame(x, y, width, height) {
 // lanes past the image edge, and a clamped point would draw a marking along
 // the border that was never detected there.
 function drawLanes(svg, record, width, height) {
+  const confThreshold = data.config.lane.clrernet_conf;
   for (const instance of record.instances) {
+    if (instance.conf < confThreshold) continue;
     const points = instance.points.filter(([x, y]) => inFrame(x, y, width, height));
     if (points.length === 1) {
       const [x, y] = points[0];
@@ -533,8 +535,10 @@ function drawLanes(svg, record, width, height) {
 // The class string is what gap-check matches on, so it is shown with the
 // confidence that decided whether it was accepted at all.
 function drawSigns(svg, record, width) {
+  const confThreshold = data.config.sign.conf;
   const fontSize = Math.max(12, width / 64);
   for (const instance of record.instances) {
+    if (instance.conf < confThreshold) continue;
     const [x1, y1, x2, y2] = instance.bbox;
     const x = Math.min(x1, x2);
     const y = Math.min(y1, y2);
