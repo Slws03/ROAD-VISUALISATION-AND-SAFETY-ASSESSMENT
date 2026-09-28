@@ -101,7 +101,6 @@ def build_report(
         # Marking a segment uncovered keeps it visually distinct from a segment
         # that was evaluated and found clean.
         record["coverage"] = "uncovered" if uncovered else "covered"
-        record["review"] = None  # reserved for the planned VLM review stage
 
         segment_records.append(record)
 

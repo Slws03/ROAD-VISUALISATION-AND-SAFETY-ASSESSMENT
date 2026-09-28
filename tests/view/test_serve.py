@@ -9,7 +9,12 @@ route directory entirely.
 
 from pathlib import Path
 
-from irap_screening.view.serve import _resolve_multi_path, _resolve_path
+from irap_screening.view.serve import (
+    _resolve_multi_path,
+    _resolve_path,
+    _review_write_target,
+    _review_write_target_multi,
+)
 
 OUT_DIR = Path("/srv/route/view")
 ROUTE_DIR = Path("/srv/route")
@@ -110,3 +115,28 @@ def test_multi_route_unknown_route_id_falls_back_to_out_dir():
 def test_multi_route_root_resolves_to_out_dir_itself():
     assert _resolve_multi_path("/", OUT_DIR, ROUTE_DIRS) == OUT_DIR
     assert _resolve_multi_path("/routes.json", OUT_DIR, ROUTE_DIRS) == OUT_DIR / "routes.json"
+
+
+def test_review_write_target_accepts_only_the_review_path():
+    assert _review_write_target("/review", ROUTE_DIR) == ROUTE_DIR
+
+
+def test_review_write_target_rejects_anything_else():
+    assert _review_write_target("/data.json", ROUTE_DIR) is None
+    assert _review_write_target("/frames/review", ROUTE_DIR) is None
+    assert _review_write_target("/", ROUTE_DIR) is None
+
+
+def test_multi_review_write_target_resolves_the_named_route():
+    assert (
+        _review_write_target_multi("/route_a/review", ROUTE_DIRS)
+        == ROUTE_DIRS["route_a"]
+    )
+
+
+def test_multi_review_write_target_rejects_an_unknown_route():
+    assert _review_write_target_multi("/nope/review", ROUTE_DIRS) is None
+
+
+def test_multi_review_write_target_rejects_a_bare_route_id():
+    assert _review_write_target_multi("/route_a", ROUTE_DIRS) is None
