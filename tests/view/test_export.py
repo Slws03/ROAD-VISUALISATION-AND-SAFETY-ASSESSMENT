@@ -11,6 +11,7 @@ from pathlib import Path
 
 from irap_screening.config import load_config
 from irap_screening.view.export import TEMPLATE, discover_routes, export_routes, export_view
+from irap_screening.view.review import save_review_entry
 from tests.test_pipeline import _write_route
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "route_demo"
@@ -104,6 +105,31 @@ def test_coverage_uses_total_and_not_assessed(tmp_path):
         entry = data["coverage"][module]
         assert set(entry) == {"total", "not_assessed"}
     assert data["coverage"]["condition"]["not_assessed"] == data["coverage"]["condition"]["total"]
+
+
+def test_segments_carry_an_empty_review_when_none_was_ever_saved(tmp_path):
+    out = _export(tmp_path)
+    data = json.loads((out / "data.json").read_text(encoding="utf-8"))
+
+    for segment in data["segments"]:
+        assert segment["review"] == {}
+
+
+def test_a_saved_review_merges_into_the_matching_segment(tmp_path):
+    """review.json lives beside the route, not in the export output -- it must
+    still show up in data.json, or the viewer would have no way to display it."""
+    route = tmp_path / "route"
+    _write_route(route)
+    save_review_entry(route, "R01-0000", "delineation", "ok", "checked against the frame")
+
+    out = tmp_path / "view"
+    export_view(route, load_config(), out)
+    data = json.loads((out / "data.json").read_text(encoding="utf-8"))
+
+    segment = next(s for s in data["segments"] if s["segment_id"] == "R01-0000")
+    assert segment["review"]["delineation"]["verdict"] == "ok"
+    other = next(s for s in data["segments"] if s["segment_id"] != "R01-0000")
+    assert other["review"] == {}
 
 
 def test_the_template_ships_with_the_package():

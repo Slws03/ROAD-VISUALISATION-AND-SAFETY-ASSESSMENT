@@ -21,6 +21,7 @@ from irap_screening.io.align import align_route
 from irap_screening.io.sources.fixture import FixtureSource
 from irap_screening.pipeline import run_pipeline
 from irap_screening.segment import build_segments
+from irap_screening.view.review import load_review
 
 TEMPLATE = Path(__file__).parent / "template.html"
 
@@ -47,9 +48,15 @@ def export_view(
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    review_by_segment = load_review(route_dir)
+
     data: dict[str, Any] = dict(report)
     data["segments"] = [
-        {**segment, "frame_ids": frame_ids_by_segment.get(segment["segment_id"], [])}
+        {
+            **segment,
+            "frame_ids": frame_ids_by_segment.get(segment["segment_id"], []),
+            "review": review_by_segment.get(segment["segment_id"], {}),
+        }
         for segment in report["segments"]
     ]
     data["frames"] = {

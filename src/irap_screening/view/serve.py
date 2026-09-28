@@ -14,6 +14,7 @@ straight to the route directory instead.
 
 from __future__ import annotations
 
+import json
 import os
 import urllib.parse
 import webbrowser
@@ -22,7 +23,12 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from irap_screening.decision.report import SCORING_MODULES
+from irap_screening.view.review import save_review_entry
+
 Resolver = Callable[[str, Path], Path]
+WriteTarget = Callable[[str], "Path | None"]
+_VERDICTS = ("ok", "flag")
 
 # The only route_dir subdirectories the viewer is allowed to read. Anything
 # else the route directory holds (gps.csv, imu.csv, ...) stays unreachable
@@ -64,6 +70,21 @@ def _resolve_path(request_path: str, out_dir: Path, route_dir: Path) -> Path:
     return result
 
 
+def _review_write_target(request_path: str, route_dir: Path) -> Path | None:
+    """Where a POST /review should write, for a single-route server."""
+    return route_dir if _safe_segments(request_path) == ["review"] else None
+
+
+def _review_write_target_multi(
+    request_path: str, route_dirs: dict[str, Path]
+) -> Path | None:
+    """Where a POST /<route_id>/review should write, for a multi-route server."""
+    words = _safe_segments(request_path)
+    if len(words) == 2 and words[1] == "review" and words[0] in route_dirs:
+        return route_dirs[words[0]]
+    return None
+
+
 def _resolve_multi_path(
     request_path: str, out_dir: Path, route_dirs: dict[str, Path]
 ) -> Path:
@@ -87,14 +108,52 @@ def _resolve_multi_path(
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):
-    """Static handler without the per-request logging, which drowns the console."""
+    """Static handler without the per-request logging, which drowns the console.
 
-    def __init__(self, *args: object, resolve: Resolver, **kwargs: object) -> None:
+    Also the only place this project accepts a write: POST /review (or
+    /<route_id>/review under the multi-route page) records one human review
+    verdict. Nothing else is writable -- everything else stays plain static
+    file serving.
+    """
+
+    def __init__(
+        self, *args: object, resolve: Resolver, write_target: WriteTarget, **kwargs: object
+    ) -> None:
         self._resolve = resolve
+        self._write_target = write_target
         super().__init__(*args, **kwargs)
 
     def translate_path(self, path: str) -> str:
         return str(self._resolve(path, Path(self.directory)))
+
+    def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler's own naming)
+        route_dir = self._write_target(self.path)
+        if route_dir is None:
+            self.send_error(404)
+            return
+
+        length = int(self.headers.get("Content-Length", 0))
+        try:
+            payload = json.loads(self.rfile.read(length))
+            segment_id = str(payload["segment_id"])
+            module = str(payload["module"])
+            verdict = str(payload["verdict"])
+            note = str(payload.get("note", ""))
+        except (ValueError, KeyError, TypeError):
+            self.send_error(400, "Malformed review payload")
+            return
+        if module not in SCORING_MODULES or verdict not in _VERDICTS:
+            self.send_error(400, "Unknown module or verdict")
+            return
+
+        entry = save_review_entry(route_dir, segment_id, module, verdict, note)
+        body = json.dumps(entry).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         pass
@@ -107,9 +166,17 @@ class _QuietHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 
-def _run(directory: Path, resolve: Resolver, port: int, open_browser: bool) -> None:
+def _run(
+    directory: Path,
+    resolve: Resolver,
+    write_target: WriteTarget,
+    port: int,
+    open_browser: bool,
+) -> None:
     """Serve `directory` until interrupted, resolving requests via `resolve`. Blocks."""
-    handler = partial(_QuietHandler, directory=str(directory), resolve=resolve)
+    handler = partial(
+        _QuietHandler, directory=str(directory), resolve=resolve, write_target=write_target
+    )
     with ThreadingHTTPServer(("127.0.0.1", port), handler) as server:
         url = f"http://127.0.0.1:{server.server_address[1]}/"
         print(f"Serving {directory} at {url}")
@@ -128,7 +195,13 @@ def serve_directory(
     """Serve one route's viewer directory until interrupted. Blocks."""
     directory = Path(directory).resolve()
     route_dir = Path(route_dir).resolve()
-    _run(directory, lambda p, out: _resolve_path(p, out, route_dir), port, open_browser)
+    _run(
+        directory,
+        lambda p, out: _resolve_path(p, out, route_dir),
+        lambda p: _review_write_target(p, route_dir),
+        port,
+        open_browser,
+    )
 
 
 def serve_routes(
@@ -140,4 +213,10 @@ def serve_routes(
     """Serve a multi-route viewer directory until interrupted. Blocks."""
     directory = Path(directory).resolve()
     route_dirs = {route_id: Path(path).resolve() for route_id, path in route_dirs.items()}
-    _run(directory, lambda p, out: _resolve_multi_path(p, out, route_dirs), port, open_browser)
+    _run(
+        directory,
+        lambda p, out: _resolve_multi_path(p, out, route_dirs),
+        lambda p: _review_write_target_multi(p, route_dirs),
+        port,
+        open_browser,
+    )

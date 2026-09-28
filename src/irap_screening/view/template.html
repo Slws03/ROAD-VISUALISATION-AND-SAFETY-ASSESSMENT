@@ -88,6 +88,7 @@
   }
   .chip.critical.active { background: var(--critical); border-color: var(--critical); color: #fff; }
   .chip.gap.active { background: var(--gap); border-color: var(--gap); color: #fff; }
+  .chip.uncovered.active { background: var(--muted); border-color: var(--muted); color: #fff; }
   #filter-status { color: var(--muted); font-size: 12px; margin-left: auto; }
   #segments { flex: 1; overflow-y: auto; }
   .seg {
@@ -152,6 +153,14 @@
   td.flag.critical { color: var(--critical); }
   td.flag.not_assessed { color: var(--unassessed); }
   .metrics { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .review-cell { min-width: 220px; }
+  .review { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .review select, .review input[type="text"] {
+    background: var(--surface2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 4px; padding: 3px 6px; font: inherit; font-size: 12px;
+  }
+  .review input[type="text"] { flex: 1; min-width: 90px; }
+  .review-status { width: 100%; color: var(--muted); font-size: 11px; }
   .rec {
     border-left: 3px solid var(--critical); background: var(--rec-bg);
     padding: 10px 14px; margin-bottom: 10px; max-width: 900px; border-radius: 0 4px 4px 0;
@@ -181,6 +190,7 @@
   <div id="segment-filters">
     <button class="chip critical" data-filter="critical">Critical</button>
     <button class="chip gap" data-filter="gap">Gap</button>
+    <button class="chip uncovered" data-filter="uncovered">Not assessed</button>
     <span id="filter-status"></span>
   </div>
   <div id="segments"></div>
@@ -351,7 +361,8 @@ function segmentHasGap(segment) {
 function segmentMatchesFilters(segment) {
   if (activeFilters.size === 0) return true;
   return activeFilters.has(worstFlag(segment))
-    || (activeFilters.has("gap") && segmentHasGap(segment));
+    || (activeFilters.has("gap") && segmentHasGap(segment))
+    || (activeFilters.has("uncovered") && segment.coverage === "uncovered");
 }
 
 function renderSegmentList() {
@@ -447,6 +458,36 @@ function renderMap() {
   map.fitBounds(L.latLngBounds(points).pad(0.2));
 }
 
+// Escapes a value for use inside an HTML attribute (the review note round-trips
+// through value="..."); textContent-style escaping is not enough there.
+function attrEscape(value) {
+  return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+// Review is only offered where there is something to review: a module the
+// pipeline already scored has a flag, right or wrong, and disputing that
+// belongs to code review, not this per-run annotation layer.
+function reviewCell(segment, module, entry) {
+  if (entry.flag !== "not_assessed") return "-";
+  const review = (segment.review && segment.review[module]) || null;
+  const verdict = review ? review.verdict : "";
+  const note = review ? review.note : "";
+  const status = review
+    ? `<div class="review-status">saved: ${review.verdict} &middot; `
+      + `${new Date(review.reviewed_at).toLocaleString()}</div>`
+    : "";
+  return `<div class="review" data-module="${module}">`
+       + `<select class="review-verdict">`
+       + `<option value=""${verdict === "" ? " selected" : ""}>verdict...</option>`
+       + `<option value="ok"${verdict === "ok" ? " selected" : ""}>OK</option>`
+       + `<option value="flag"${verdict === "flag" ? " selected" : ""}>Flag</option>`
+       + `</select>`
+       + `<input class="review-note" type="text" placeholder="note" value="${attrEscape(note)}">`
+       + `<button class="review-save">Save</button>`
+       + status
+       + `</div>`;
+}
+
 function moduleRows(segment) {
   return MODULES.map((module) => {
     const entry = segment[module] || {};
@@ -458,9 +499,44 @@ function moduleRows(segment) {
     return `<tr><td>${label}</td>`
          + `<td class="flag ${entry.flag}">${entry.flag ?? "-"}</td>`
          + `<td class="metrics">${irapCategoryLabel(module, entry)}</td>`
-         + `<td class="metrics">${detail}</td></tr>`;
+         + `<td class="metrics">${detail}</td>`
+         + `<td class="review-cell">${reviewCell(segment, module, entry)}</td></tr>`;
   }).join("");
 }
+
+// Delegated on document: renderDetail() replaces the whole panel on every
+// save and every segment switch, so a handler bound to the button itself
+// would need rebinding after each render anyway.
+document.addEventListener("click", (event) => {
+  const button = event.target.closest(".review-save");
+  if (!button) return;
+  const segment = data.segments[selected];
+  const container = button.closest(".review");
+  const module = container.dataset.module;
+  const verdict = container.querySelector(".review-verdict").value;
+  const note = container.querySelector(".review-note").value;
+  if (!verdict) return;
+
+  button.disabled = true;
+  fetch(`${routePrefix()}review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ segment_id: segment.segment_id, module, verdict, note }),
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error(`save failed (${response.status})`);
+      return response.json();
+    })
+    .then((entry) => {
+      segment.review = segment.review || {};
+      segment.review[module] = entry;
+      renderDetail();
+    })
+    .catch((error) => {
+      button.disabled = false;
+      alert(`Could not save review: ${error.message}`);
+    });
+});
 
 function doubleLineText(dl) {
   // The scan only runs on a critical-grade segment (gap-check's only use of
@@ -623,7 +699,7 @@ function renderDetail() {
          </figure>`
       : `<p class="metrics">No frames fall within this segment.</p>`}
     <h2>${segment.segment_id} · ${Math.round(segment.start_m)}-${Math.round(segment.end_m)} m</h2>
-    <table><tr><th>module</th><th>flag</th><th>iRAP category</th><th>metrics</th></tr>
+    <table><tr><th>module</th><th>flag</th><th>iRAP category</th><th>metrics</th><th>review</th></tr>
       ${moduleRows(segment)}</table>
     <h2>Signs and markings</h2>
     ${signsBlock(segment)}
