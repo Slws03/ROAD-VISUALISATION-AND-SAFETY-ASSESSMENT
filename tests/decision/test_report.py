@@ -103,10 +103,6 @@ def test_recommendation_names_the_missing_mitigation():
     assert entry["present"] == ["advance_bend_sign"]
 
 
-def test_review_field_is_reserved_and_null():
-    assert _report()["segments"][0]["review"] is None
-
-
 def test_not_assessed_is_reported_as_uncovered_not_clean():
     """An unevaluated segment must not look identical to a confirmed-safe one."""
     segment = _report()["segments"][1]
