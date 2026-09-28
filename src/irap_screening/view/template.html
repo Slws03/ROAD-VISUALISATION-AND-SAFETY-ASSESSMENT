@@ -132,6 +132,8 @@
     position: absolute; inset: 0; width: 100%; height: 100%;
     pointer-events: none;
   }
+  .frame-wrap .overlay.hidden { display: none; }
+  figcaption label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
   figcaption {
     display: flex; align-items: center; gap: 12px;
     margin-top: 8px; color: var(--muted); font-size: 12px;
@@ -235,6 +237,9 @@ function setupThemeToggle() {
   });
 }
 setupThemeToggle();
+
+const OVERLAY_KEY = "irap-view-overlay";
+let overlayVisible = localStorage.getItem(OVERLAY_KEY) !== "hidden";
 
 let data = null;
 let selected = null;
@@ -503,7 +508,9 @@ function inFrame(x, y, width, height) {
 // lanes past the image edge, and a clamped point would draw a marking along
 // the border that was never detected there.
 function drawLanes(svg, record, width, height) {
+  const confThreshold = data.config.lane.clrernet_conf;
   for (const instance of record.instances) {
+    if (instance.conf < confThreshold) continue;
     const points = instance.points.filter(([x, y]) => inFrame(x, y, width, height));
     if (points.length === 1) {
       const [x, y] = points[0];
@@ -528,8 +535,10 @@ function drawLanes(svg, record, width, height) {
 // The class string is what gap-check matches on, so it is shown with the
 // confidence that decided whether it was accepted at all.
 function drawSigns(svg, record, width) {
+  const confThreshold = data.config.sign.conf;
   const fontSize = Math.max(12, width / 64);
   for (const instance of record.instances) {
+    if (instance.conf < confThreshold) continue;
     const [x1, y1, x2, y2] = instance.bbox;
     const x = Math.min(x1, x2);
     const y = Math.min(y1, y2);
@@ -575,6 +584,7 @@ function showFrame() {
   const overlay = document.getElementById("frame-overlay");
   if (!image || !overlay) return;
   const frameId = frames[frameIndex];
+  overlay.classList.toggle("hidden", !overlayVisible);
   image.onload = () => drawOverlay(overlay, image.naturalWidth, image.naturalHeight, frameId);
   image.src = routePrefix() + data.frames[frameId];
   image.alt = frameId;
@@ -608,6 +618,7 @@ function renderDetail() {
              <button id="next">&rarr;</button>
              <span id="frame-caption"></span>
              <span>green = lane points, amber = signs</span>
+             <label><input type="checkbox" id="overlay-toggle"> show markers</label>
            </figcaption>
          </figure>`
       : `<p class="metrics">No frames fall within this segment.</p>`}
@@ -622,6 +633,13 @@ function renderDetail() {
   if (frames.length) {
     document.getElementById("prev").addEventListener("click", () => step(-1));
     document.getElementById("next").addEventListener("click", () => step(1));
+    const overlayToggle = document.getElementById("overlay-toggle");
+    overlayToggle.checked = overlayVisible;
+    overlayToggle.addEventListener("change", () => {
+      overlayVisible = overlayToggle.checked;
+      localStorage.setItem(OVERLAY_KEY, overlayVisible ? "shown" : "hidden");
+      document.getElementById("frame-overlay").classList.toggle("hidden", !overlayVisible);
+    });
     showFrame();
   }
 }

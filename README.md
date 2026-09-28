@@ -31,9 +31,6 @@ external data.
 | `irap import-lanes --route DIR --raw dump.json` | Converts a CLRerNet dump; writes `detections/lane.jsonl` |
 | `irap view --route DIR` | Builds and serves a local page for inspecting the results |
 
-`irap sweep`, `irap validate` and `irap config show` are designed but not yet
-implemented in this build.
-
 ## Detection runners
 
 `irap detect-signs` is the only command that needs a model. It lives behind an

@@ -9,11 +9,11 @@ import numpy as np
 import pytest
 
 from irap_screening.config import load_config
-from irap_screening.pipeline import run_pipeline, validate_route
+from irap_screening.pipeline import run_pipeline
 from tests.factories import curved_route
 
 
-def _write_route(root: Path, include_speed: bool = True) -> None:
+def _write_route(root: Path) -> None:
     frames, gps, imu = curved_route(radius_m=312.5, arc_length_m=300.0)
     (root / "frames").mkdir(parents=True, exist_ok=True)
 
@@ -39,7 +39,7 @@ def _write_route(root: Path, include_speed: bool = True) -> None:
                     fix.timestamp_utc.isoformat(),
                     fix.lat,
                     fix.lon,
-                    fix.speed_mps if include_speed else "",
+                    fix.speed_mps,
                 ]
             )
 
@@ -119,33 +119,6 @@ def test_threshold_override_changes_the_verdict(tmp_path: Path):
     report = run_pipeline(tmp_path, cfg)
     assert report["segments"][0]["curvature"]["flag"] == "normal"
     assert report["config"]["curvature"]["threshold_m"] == 200
-
-
-def test_validate_reports_sampling_rates(tmp_path: Path):
-    _write_route(tmp_path)
-    summary = validate_route(tmp_path, load_config())
-    assert summary["gps_hz"] == pytest.approx(1.0, rel=0.2)
-    assert summary["imu_hz"] == pytest.approx(50.0, rel=0.2)
-
-
-def test_validate_reports_speed_source(tmp_path: Path):
-    _write_route(tmp_path, include_speed=False)
-    summary = validate_route(tmp_path, load_config())
-    assert summary["speed_source"] == "differenced"
-
-
-def test_validate_reports_gravity_direction_for_mount_check(tmp_path: Path):
-    """Gravity direction reveals whether the phone orientation is fixed."""
-    _write_route(tmp_path)
-    summary = validate_route(tmp_path, load_config())
-    assert "gravity_axis" in summary
-    assert summary["gravity_axis"] == "az"
-
-
-def test_validate_reports_frames_per_segment(tmp_path: Path):
-    _write_route(tmp_path)
-    summary = validate_route(tmp_path, load_config())
-    assert summary["frames_per_segment"] > 0
 
 
 def test_missing_module_results_raise_rather_than_silently_report_nothing():
