@@ -283,3 +283,42 @@ def test_a_route_left_by_a_failed_job_blocks_a_retry_under_the_same_name(server,
     _settled(base)
 
     assert _request(f"{base}/upload?name=r1", body)[0] == 409
+
+
+@pytest.mark.parametrize("length", ["abc", "-1", "0"])
+def test_a_content_length_that_is_not_a_positive_number_is_refused(server, length):
+    import http.client
+
+    base, upload = server
+    connection = http.client.HTTPConnection(base.removeprefix("http://"), timeout=20)
+    connection.putrequest("POST", "/upload?name=r1")
+    connection.putheader("Content-Length", length)
+    connection.endheaders()
+
+    assert connection.getresponse().status == 400
+    assert list(upload.routes_root.iterdir()) == []
+
+
+def test_a_connection_reset_mid_upload_leaves_no_temporary_zip(server, tmp_path, monkeypatch):
+    import socket
+    import struct
+    import tempfile
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    base, _ = server
+    host, port = base.removeprefix("http://").split(":")
+
+    client = socket.create_connection((host, int(port)))
+    client.sendall(b"POST /upload?name=r1 HTTP/1.1\r\nContent-Length: 1000000\r\n\r\npartial")
+    time.sleep(0.3)  # let the handler create its temporary file and block reading
+    # Linger 0 makes close() send a reset rather than a clean end of stream.
+    client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("hh", 1, 0))
+    client.close()
+
+    for _ in range(100):
+        if not list(scratch.iterdir()):
+            break
+        time.sleep(0.05)
+    assert list(scratch.iterdir()) == []

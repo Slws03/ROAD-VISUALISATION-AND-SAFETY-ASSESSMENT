@@ -163,7 +163,15 @@ class _QuietHandler(SimpleHTTPRequestHandler):
     def _receive_upload(self, upload: Upload) -> None:
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
         name = query.get("name", [""])[0]
-        length = int(self.headers.get("Content-Length", 0))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = 0
+        if length <= 0:
+            # Without a usable length there is no telling where the body ends.
+            self.close_connection = True
+            self.send_error(400, "Upload was empty or incomplete")
+            return
         if not valid_route_id(name):
             self._refuse(400, "Route name may use only letters, digits, _ and -", length)
             return
@@ -181,14 +189,19 @@ class _QuietHandler(SimpleHTTPRequestHandler):
         handle, temporary = tempfile.mkstemp(suffix=".zip")
         zip_path = Path(temporary)
         remaining = length
-        with os.fdopen(handle, "wb") as sink:
-            while remaining:
-                chunk = self.rfile.read(min(remaining, _UPLOAD_CHUNK))
-                if not chunk:
-                    break
-                sink.write(chunk)
-                remaining -= len(chunk)
-        if remaining or not length:
+        try:
+            with os.fdopen(handle, "wb") as sink:
+                while remaining:
+                    chunk = self.rfile.read(min(remaining, _UPLOAD_CHUNK))
+                    if not chunk:
+                        break
+                    sink.write(chunk)
+                    remaining -= len(chunk)
+        except BaseException:
+            # A reset connection or a full disk must not leave the zip behind.
+            zip_path.unlink(missing_ok=True)
+            raise
+        if remaining:
             zip_path.unlink(missing_ok=True)
             self.send_error(400, "Upload was empty or incomplete")
             return
