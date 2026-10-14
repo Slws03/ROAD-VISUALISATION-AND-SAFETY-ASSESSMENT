@@ -7,13 +7,15 @@ sensitivity sweep be reproduced on an ordinary laptop.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import typer
 
-from irap_screening.config import load_config
+from irap_screening.config import Settings, load_config
 from irap_screening.decision.report import write_report
 from irap_screening.pipeline import run_pipeline
+from irap_screening.view.jobs import Upload
 
 app = typer.Typer(help="Dashcam and IMU based iRAP road safety screening.")
 
@@ -45,6 +47,18 @@ ViewOutOption = typer.Option(
 PortOption = typer.Option(8000, "--port", help="Port for the local viewer server.")
 NoServeOption = typer.Option(False, "--no-serve", help="Build the viewer, do not serve it.")
 NoOpenOption = typer.Option(False, "--no-open", help="Serve without opening a browser.")
+UploadWeightsOption = typer.Option(
+    Path("best.pt"), "--weights", help="YOLO sign weight used for uploaded routes."
+)
+ClrernetPythonOption = typer.Option(
+    Path(".clrernet/venv/Scripts/python.exe"),
+    "--clrernet-python",
+    help="Interpreter of the CLRerNet environment (scripts/clrernet/setup.ps1).",
+)
+SignDeviceOption = typer.Option(
+    "cpu", "--sign-device", help="Sign detector device for uploaded routes, e.g. cpu or 0."
+)
+LANE_SCRIPT = Path("scripts/clrernet/dump.py")
 
 
 def _require_route(route: Path) -> Path:
@@ -123,6 +137,47 @@ def import_lanes(
     typer.echo(f"Wrote {out_path}")
 
 
+def _upload_settings(
+    routes_root: Path,
+    out_dir: Path,
+    cfg: Settings,
+    profile: Path | None,
+    overrides: list[str] | None,
+    weights: Path,
+    clrernet_python: Path,
+    sign_device: str,
+) -> Upload | None:
+    """What an uploaded route's job will run, or None where it could not run.
+
+    Decided once at startup: a page that offered the upload control and then
+    failed halfway through a job would be worse than one that never offered it.
+    """
+    missing = [path for path in (weights, clrernet_python, LANE_SCRIPT) if not path.exists()]
+    if missing:
+        typer.echo(
+            "Upload is off, missing: "
+            + ", ".join(str(path) for path in missing)
+            + ". Run from the repository root; scripts/clrernet/setup.ps1 builds the "
+            "CLRerNet environment."
+        )
+        return None
+    # The sign detector is started with this interpreter rather than through
+    # `uv run`, and given the same configuration this server was started with.
+    sign_command = [sys.executable, "-m", "irap_screening.cli", "detect-signs"]
+    sign_command += ["--weights", str(weights.resolve()), "--device", sign_device]
+    if profile:
+        sign_command += ["--config", str(profile.resolve())]
+    for override in overrides or []:
+        sign_command += ["--set", override]
+    return Upload(
+        routes_root=routes_root,
+        out_dir=out_dir,
+        cfg=cfg,
+        lane_command=[str(clrernet_python.resolve()), str(LANE_SCRIPT.resolve())],
+        sign_command=sign_command,
+    )
+
+
 @app.command(name="view")
 def view(
     route: Path = RouteOption,
@@ -133,6 +188,9 @@ def view(
     port: int = PortOption,
     no_serve: bool = NoServeOption,
     no_open: bool = NoOpenOption,
+    weights: Path = UploadWeightsOption,
+    clrernet_python: Path = ClrernetPythonOption,
+    sign_device: str = SignDeviceOption,
 ) -> None:
     """Build and serve a local page for inspecting a route's results.
 
@@ -144,6 +202,12 @@ def view(
     --route may also name a directory of routes (each an immediate
     subdirectory with its own frames.csv/gps.csv/imu.csv): every route found
     is built, and the page gets a switcher to jump between them.
+
+    Serving a directory of routes also puts an "Upload route" control on the
+    page: a zip of a prepared route is unpacked beside the others, both
+    detectors and the report run over it, and it joins the switcher. That
+    needs the sign weight and the local CLRerNet environment; without them
+    the page is served read-only.
     """
     from irap_screening.view.export import discover_routes, export_routes, export_view, is_route_dir
     from irap_screening.view.serve import serve_directory, serve_routes
@@ -171,7 +235,10 @@ def view(
     if no_serve:
         typer.echo(f"Serve it with: python -m http.server -d {out_dir}")
         return
-    serve_routes(out_dir, routes, port=port, open_browser=not no_open)
+    upload = _upload_settings(
+        route, out_dir, cfg, config, set_, weights, clrernet_python, sign_device
+    )
+    serve_routes(out_dir, routes, port=port, open_browser=not no_open, upload=upload)
 
 
 if __name__ == "__main__":

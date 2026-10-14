@@ -1,6 +1,7 @@
 """CLI surface. The main entry point must run without a GPU."""
 
 import json
+import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -142,7 +143,7 @@ def test_view_scan_serves_each_routes_own_directory(tmp_path: Path, monkeypatch)
     _write_route(parent / "route_b")
     calls = {}
 
-    def fake_serve_routes(directory, route_dirs, port=8000, open_browser=True):
+    def fake_serve_routes(directory, route_dirs, port=8000, open_browser=True, upload=None):
         calls["directory"] = directory
         calls["route_dirs"] = route_dirs
 
@@ -206,3 +207,57 @@ def test_an_explicit_out_still_wins(tmp_path: Path):
     assert result.exit_code == 0, result.output
     assert (elsewhere / "report.json").exists()
     assert not (route / "out").exists()
+
+
+def _capture_upload(monkeypatch) -> dict:
+    seen = {}
+    monkeypatch.setattr(
+        "irap_screening.view.serve.serve_routes",
+        lambda directory, routes, port=8000, open_browser=True, upload=None: seen.update(
+            upload=upload
+        ),
+    )
+    return seen
+
+
+def test_view_serves_read_only_when_the_clrernet_environment_is_missing(
+    tmp_path: Path, monkeypatch
+):
+    parent = tmp_path / "routes"
+    _write_route(parent / "route_a")
+    monkeypatch.chdir(tmp_path)  # no best.pt and no .clrernet here
+    seen = _capture_upload(monkeypatch)
+
+    result = runner.invoke(app, ["view", "--route", str(parent)])
+
+    assert result.exit_code == 0, result.output
+    assert seen["upload"] is None
+    assert "Upload is off" in result.output and "setup.ps1" in result.output
+
+
+def test_view_hands_the_server_both_detector_commands(tmp_path: Path, monkeypatch):
+    parent = tmp_path / "routes"
+    _write_route(parent / "route_a")
+    for relative in ("best.pt", "py.exe", "scripts/clrernet/dump.py"):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+    seen = _capture_upload(monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "view", "--route", str(parent), "--clrernet-python", "py.exe",
+            "--sign-device", "0", "--set", "lane.clrernet_conf=0.5",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    upload = seen["upload"]
+    assert upload.routes_root == parent
+    assert upload.lane_command[0].endswith("py.exe")
+    assert upload.lane_command[1].endswith("dump.py")
+    assert upload.sign_command[:4] == [sys.executable, "-m", "irap_screening.cli", "detect-signs"]
+    assert upload.sign_command[-2:] == ["--set", "lane.clrernet_conf=0.5"]
+    assert upload.sign_command[upload.sign_command.index("--device") + 1] == "0"
