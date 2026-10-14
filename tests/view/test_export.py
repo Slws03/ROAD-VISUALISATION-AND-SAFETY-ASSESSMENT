@@ -10,7 +10,13 @@ import json
 from pathlib import Path
 
 from irap_screening.config import load_config
-from irap_screening.view.export import TEMPLATE, discover_routes, export_routes, export_view
+from irap_screening.view.export import (
+    TEMPLATE,
+    add_route,
+    discover_routes,
+    export_routes,
+    export_view,
+)
 from irap_screening.view.review import save_review_entry
 from tests.test_pipeline import _write_route
 
@@ -165,3 +171,19 @@ def test_export_routes_writes_one_shared_page_and_per_route_data(tmp_path):
         assert (out_dir / route_id / "data.json").exists()
         # Only the shared page at out_dir is served; a nested one would be dead weight.
         assert not (out_dir / route_id / "index.html").exists()
+
+
+def test_add_route_joins_an_already_exported_directory(tmp_path):
+    _write_route(tmp_path / "route_a")
+    _write_route(tmp_path / "route_b")
+    out = tmp_path / "view"
+    routes = {"route_a": tmp_path / "route_a"}
+    export_routes(routes, load_config(), out)
+
+    add_route("route_b", tmp_path / "route_b", routes, load_config(), out)
+
+    assert routes["route_b"] == (tmp_path / "route_b").resolve()
+    listed = json.loads((out / "routes.json").read_text(encoding="utf-8"))
+    assert [r["id"] for r in listed] == ["route_a", "route_b"]
+    assert (out / "route_b" / "data.json").exists()
+    assert not (out / "route_b" / "index.html").exists()

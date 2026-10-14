@@ -113,3 +113,20 @@ def export_routes(routes: dict[str, Path], cfg: Settings, out_dir: Path) -> Path
     (out_dir / "routes.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
     shutil.copyfile(TEMPLATE, out_dir / "index.html")
     return out_dir
+
+
+def add_route(
+    route_id: str, route_dir: Path, routes: dict[str, Path], cfg: Settings, out_dir: Path
+) -> None:
+    """Render one more route into a directory export_routes already built.
+
+    `routes` is updated in place. A running server resolves requests through
+    that same dict, which is what makes the new route reachable without a
+    restart.
+    """
+    out_dir = Path(out_dir)
+    route_out = export_view(route_dir, cfg, out_dir / route_id, route_id=route_id)
+    (route_out / "index.html").unlink()
+    routes[route_id] = Path(route_dir).resolve()
+    index = [{"id": known, "label": known} for known in sorted(routes)]
+    (out_dir / "routes.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
