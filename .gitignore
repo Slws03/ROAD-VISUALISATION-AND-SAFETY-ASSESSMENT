@@ -36,6 +36,9 @@ Thumbs.db
 
 .worktrees/
 
+# Local CLRerNet environment built by scripts/clrernet/setup.ps1
+/.clrernet/
+
 # Tool artifacts
 .codegraph/
 *.drawio.png
