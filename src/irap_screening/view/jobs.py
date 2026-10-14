@@ -152,7 +152,9 @@ class JobRunner:
     def _run(self, steps: list[Step]) -> None:
         try:
             for number, (label, run) in enumerate(steps, start=1):
-                self._update(step=number, label=label)
+                with self._lock:
+                    self._status.update(step=number, label=label)
+                    self._log.clear()
                 run(self._append)
         except Exception as error:  # noqa: BLE001 (whatever stopped the step is the report)
             self._update(state="failed", error=str(error) or type(error).__name__)

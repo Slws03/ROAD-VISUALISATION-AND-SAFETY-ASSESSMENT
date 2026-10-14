@@ -187,3 +187,11 @@ def test_add_route_joins_an_already_exported_directory(tmp_path):
     assert [r["id"] for r in listed] == ["route_a", "route_b"]
     assert (out / "route_b" / "data.json").exists()
     assert not (out / "route_b" / "index.html").exists()
+
+
+def test_the_page_carries_the_upload_control_hidden_by_default():
+    page = TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="upload" hidden' in page
+    assert 'fetch("job")' in page
+    assert "upload?name=" in page

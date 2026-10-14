@@ -8,15 +8,15 @@
     seconds, with no GPU and no model install.
 
     Lane detections are NOT produced here. CLRerNet needs an mmcv-pinned
-    environment this project does not reproduce, so inference happens in
-    notebooks/clrernet_export.ipynb on Colab; this script converts the dump that
-    notebook writes.
+    environment of its own, so inference happens in scripts/clrernet/dump.py
+    (or notebooks/clrernet_export.ipynb on Colab); this script converts the dump
+    either one writes.
 
 .PARAMETER Route
     The route directory: frames.csv, frames/, and (for -Report) gps.csv, imu.csv.
 
 .PARAMETER Raw
-    The clrernet_raw.json produced by the Colab notebook.
+    The clrernet_raw.json produced by scripts/clrernet/dump.py or the Colab notebook.
     Defaults to clrernet_raw.json inside the route directory.
 
 .PARAMETER Weights
@@ -108,7 +108,7 @@ if (-not $Raw) { $Raw = Join-Path $Route 'clrernet_raw.json' }
 if (-not $SkipLanes -and -not (Test-Path $Raw)) {
     Write-Host "CLRerNet dump not found: $Raw" -ForegroundColor Red
     Write-Host ""
-    Write-Host "Produce one by running notebooks/clrernet_export.ipynb in Colab, or"
+    Write-Host "Produce one with scripts\clrernet\dump.py (or the Colab notebook), or"
     Write-Host "pass -SkipLanes to run the sign detector alone. Without lane.jsonl"
     Write-Host "every segment reads as unmarked road and grades critical."
     exit 1

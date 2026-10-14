@@ -56,21 +56,28 @@ against a weight whose class names are not exactly the five the decision layer
 matches on -- a drifted name would flow through every layer cleanly and then
 report present signage as missing.
 
-Lane detections come from CLRerNet, whose mmcv-pinned environment is not
-reproduced here. `notebooks/clrernet_export.ipynb` is a self-contained Colab
-notebook -- install, patches, inference, dump -- that writes one
-`clrernet_raw.json`. `irap import-lanes` converts it locally:
+Lane detections come from CLRerNet, which pins torch 2.2 and mmcv 2.2.0 and so
+gets an environment of its own under `.clrernet/`, never the project's:
 
-```bash
-uv run irap import-lanes --route DIR --raw clrernet_raw.json
+```powershell
+.\scripts\clrernet\setup.ps1
+.\.clrernet\venv\Scripts\python.exe scripts\clrernet\dump.py --route DIR
+uv run irap import-lanes --route DIR --raw DIR\clrernet_raw.json
 ```
 
-The split is deliberate. The notebook only writes numbers down; the mapping from
-CLRerNet's normalised coordinates back to original-image pixels is the part that
-can be plausibly wrong, so it lives in the tested codebase rather than in an
-environment that cannot be reproduced. `tests/test_notebook_export.py` pins the
-two together: it executes the notebook's dump and overlay cells against stubs
-and fails if either drifts from the exporter.
+`setup.ps1` installs prebuilt wheels only. CLRerNet's one compiled piece, a CUDA
+lane NMS that needs `nvcc`, is replaced by the NumPy port in
+`scripts/clrernet/nms`, which `tests/test_clrernet_nms.py` checks against a
+statement-by-statement transliteration of the original kernel.
+`notebooks/clrernet_export.ipynb` does the same job on Colab and writes the same
+`clrernet_raw.json`.
+
+The split is deliberate. `dump.py` and the notebook only write numbers down; the
+mapping from CLRerNet's normalised coordinates back to original-image pixels is
+the part that can be plausibly wrong, so it lives in the tested codebase rather
+than beside the model. `tests/test_notebook_export.py` pins the notebook to the
+exporter: it executes the notebook's dump and overlay cells against stubs and
+fails if either drifts.
 
 ## Viewer
 
@@ -85,6 +92,31 @@ It builds `view/`, serves it on localhost and opens a browser. Arrow keys step
 through a segment's frames. Overlays are rendered in Python rather than on a
 canvas in the browser, so the coordinate arithmetic keeps a single tested
 implementation instead of a second, unwatched one in JavaScript.
+
+### Upload and run
+
+Pointing `irap view` at a directory of routes also puts an "Upload route"
+control on the page:
+
+```powershell
+uv run irap view --route routes
+```
+
+Choose a zip of a prepared route (`frames/`, `frames.csv`, `gps.csv`, `imu.csv`,
+either at the top level or inside one folder). The server unpacks it beside the
+other routes under the zip's file name, runs CLRerNet, the lane import, the sign
+detector and the report over it, and the page switches to the new route when
+the job ends. Everything is written into the route's own directory, exactly as
+a manual run leaves it, so `irap report` can be re-run on it afterwards.
+
+The control appears only when `best.pt`, the `.clrernet` environment and
+`scripts/clrernet/dump.py` are found from the working directory; otherwise the
+server says what is missing and serves the page read-only. One job runs at a
+time, and a route name is never overwritten: delete its directory to retry.
+
+The sign detector runs on the CPU unless `--sign-device 0` is passed, which
+needs a CUDA build of torch in the project environment. On a 117-frame route
+that is about 55 s of a 70 s job.
 
 ## Configuration
 

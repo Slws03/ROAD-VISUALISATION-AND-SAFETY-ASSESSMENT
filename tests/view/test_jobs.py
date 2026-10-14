@@ -164,8 +164,8 @@ def test_steps_run_in_order_and_the_job_ends_done():
     ran = []
     runner = JobRunner()
     steps = [
-        ("First", lambda log: (ran.append("first"), log("a line"))),
-        ("Second", lambda log: ran.append("second")),
+        ("First", lambda log: (ran.append("first"), log("from first"))),
+        ("Second", lambda log: (ran.append("second"), log("from second"))),
     ]
 
     runner.start("r1", steps)
@@ -174,7 +174,9 @@ def test_steps_run_in_order_and_the_job_ends_done():
     assert ran == ["first", "second"]
     assert status["state"] == "done"
     assert (status["route_id"], status["step"], status["steps"]) == ("r1", 2, 2)
-    assert status["log"] == ["a line"]
+    # The log is the current step's own: a line left over from the step before
+    # would be shown beside the wrong label.
+    assert status["log"] == ["from second"]
 
 
 def test_a_failing_step_stops_the_job_and_reports_why():

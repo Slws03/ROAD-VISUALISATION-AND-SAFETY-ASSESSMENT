@@ -40,7 +40,7 @@ ProfileOption = typer.Option(None, "--config", help="Profile YAML overriding def
 RouteIdOption = typer.Option("R01", "--route-id", help="Identifier used in segment ids.")
 WeightsOption = typer.Option(..., "--weights", help="Path to the YOLO sign weight (.pt).")
 DeviceOption = typer.Option("cpu", "--device", help="Inference device, e.g. cpu or 0.")
-RawOption = typer.Option(..., "--raw", help="CLRerNet dump written by the Colab cell.")
+RawOption = typer.Option(..., "--raw", help="CLRerNet dump written by scripts/clrernet/dump.py.")
 ViewOutOption = typer.Option(
     None, "--out", help="Viewer output directory. Default: a view/ inside the route."
 )
@@ -119,8 +119,8 @@ def import_lanes(
 ) -> None:
     """Convert a CLRerNet dump into detections/lane.jsonl.
 
-    CLRerNet runs in an mmcv-pinned environment this project does not reproduce,
-    so inference happens on Colab and only the numbers come back. The coordinate
+    CLRerNet runs in an mmcv-pinned environment of its own (scripts/clrernet,
+    or the Colab notebook), and only the numbers come back. The coordinate
     mapping back to original-image pixels happens here, where it is tested.
     """
     from irap_screening.runners.lane import export
