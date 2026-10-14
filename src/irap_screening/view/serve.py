@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import urllib.parse
 import webbrowser
 from collections.abc import Callable
@@ -24,11 +25,13 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from irap_screening.decision.report import SCORING_MODULES
+from irap_screening.view.jobs import Conflict, Upload, pipeline_steps, valid_route_id
 from irap_screening.view.review import save_review_entry
 
 Resolver = Callable[[str, Path], Path]
 WriteTarget = Callable[[str], "Path | None"]
 _VERDICTS = ("ok", "flag")
+_UPLOAD_CHUNK = 1 << 20
 
 # The only route_dir subdirectories the viewer is allowed to read. Anything
 # else the route directory holds (gps.csv, imu.csv, ...) stays unreachable
@@ -110,23 +113,110 @@ def _resolve_multi_path(
 class _QuietHandler(SimpleHTTPRequestHandler):
     """Static handler without the per-request logging, which drowns the console.
 
-    Also the only place this project accepts a write: POST /review (or
-    /<route_id>/review under the multi-route page) records one human review
-    verdict. Nothing else is writable -- everything else stays plain static
-    file serving.
+    Two things here are not static. POST /review (or /<route_id>/review under
+    the multi-route page) records one human review verdict. And when the
+    server was given an Upload, POST /upload receives a route zip and GET /job
+    reports the job running over it.
     """
 
     def __init__(
-        self, *args: object, resolve: Resolver, write_target: WriteTarget, **kwargs: object
+        self,
+        *args: object,
+        resolve: Resolver,
+        write_target: WriteTarget,
+        upload: Upload | None = None,
+        **kwargs: object,
     ) -> None:
         self._resolve = resolve
         self._write_target = write_target
+        self._upload = upload
         super().__init__(*args, **kwargs)
 
     def translate_path(self, path: str) -> str:
         return str(self._resolve(path, Path(self.directory)))
 
+    def _send_json(self, code: int, payload: object) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler's own naming)
+        if self._upload is not None and _safe_segments(self.path) == ["job"]:
+            self._send_json(200, self._upload.runner.status())
+            return
+        super().do_GET()
+
+    def _refuse(self, code: int, message: str, unread: int) -> None:
+        # Read the body out before answering. Closing on an unread body resets
+        # the connection on Windows, and the browser then reports a network
+        # failure instead of this message.
+        while unread > 0:
+            chunk = self.rfile.read(min(unread, _UPLOAD_CHUNK))
+            if not chunk:
+                break
+            unread -= len(chunk)
+        self.send_error(code, message)
+
+    def _receive_upload(self, upload: Upload) -> None:
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        name = query.get("name", [""])[0]
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = 0
+        if length <= 0:
+            # Without a usable length there is no telling where the body ends.
+            self.close_connection = True
+            self.send_error(400, "Upload was empty or incomplete")
+            return
+        if not valid_route_id(name):
+            self._refuse(400, "Route name may use only letters, digits, _ and -", length)
+            return
+        if (upload.routes_root / name).exists():
+            # The reason phrase must stay latin-1, so it names no filesystem path.
+            self._refuse(
+                409, f"A route named {name} already exists; delete its directory first", length
+            )
+            return
+        if upload.runner.status()["state"] == "running":
+            self._refuse(409, "A job is already running", length)
+            return
+
+        # Streamed to disk: a route zip can be hundreds of megabytes.
+        handle, temporary = tempfile.mkstemp(suffix=".zip")
+        zip_path = Path(temporary)
+        remaining = length
+        try:
+            with os.fdopen(handle, "wb") as sink:
+                while remaining:
+                    chunk = self.rfile.read(min(remaining, _UPLOAD_CHUNK))
+                    if not chunk:
+                        break
+                    sink.write(chunk)
+                    remaining -= len(chunk)
+        except BaseException:
+            # A reset connection or a full disk must not leave the zip behind.
+            zip_path.unlink(missing_ok=True)
+            raise
+        if remaining:
+            zip_path.unlink(missing_ok=True)
+            self.send_error(400, "Upload was empty or incomplete")
+            return
+        try:
+            upload.runner.start(name, pipeline_steps(upload, name, zip_path))
+        except Conflict as error:
+            zip_path.unlink(missing_ok=True)
+            self.send_error(409, str(error))
+            return
+        self._send_json(202, upload.runner.status())
+
     def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler's own naming)
+        if self._upload is not None and _safe_segments(self.path) == ["upload"]:
+            self._receive_upload(self._upload)
+            return
         route_dir = self._write_target(self.path)
         if route_dir is None:
             self.send_error(404)
@@ -166,18 +256,33 @@ class _QuietHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 
+def _make_server(
+    directory: Path,
+    resolve: Resolver,
+    write_target: WriteTarget,
+    port: int,
+    upload: Upload | None = None,
+) -> ThreadingHTTPServer:
+    handler = partial(
+        _QuietHandler,
+        directory=str(directory),
+        resolve=resolve,
+        write_target=write_target,
+        upload=upload,
+    )
+    return ThreadingHTTPServer(("127.0.0.1", port), handler)
+
+
 def _run(
     directory: Path,
     resolve: Resolver,
     write_target: WriteTarget,
     port: int,
     open_browser: bool,
+    upload: Upload | None = None,
 ) -> None:
     """Serve `directory` until interrupted, resolving requests via `resolve`. Blocks."""
-    handler = partial(
-        _QuietHandler, directory=str(directory), resolve=resolve, write_target=write_target
-    )
-    with ThreadingHTTPServer(("127.0.0.1", port), handler) as server:
+    with _make_server(directory, resolve, write_target, port, upload) as server:
         url = f"http://127.0.0.1:{server.server_address[1]}/"
         print(f"Serving {directory} at {url}")
         print("Press Ctrl+C to stop.")
@@ -209,14 +314,20 @@ def serve_routes(
     route_dirs: dict[str, Path],
     port: int = 8000,
     open_browser: bool = True,
+    upload: Upload | None = None,
 ) -> None:
     """Serve a multi-route viewer directory until interrupted. Blocks."""
     directory = Path(directory).resolve()
     route_dirs = {route_id: Path(path).resolve() for route_id, path in route_dirs.items()}
+    if upload is not None:
+        # One table for both: a finished job adds its route here, and the
+        # resolvers below read the same dict on every request.
+        upload.route_dirs = route_dirs
     _run(
         directory,
         lambda p, out: _resolve_multi_path(p, out, route_dirs),
         lambda p: _review_write_target_multi(p, route_dirs),
         port,
         open_browser,
+        upload,
     )

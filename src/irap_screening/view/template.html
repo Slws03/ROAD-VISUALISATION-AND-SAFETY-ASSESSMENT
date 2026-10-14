@@ -76,6 +76,8 @@
     background: var(--surface2); color: var(--text); border: 1px solid var(--line);
     border-radius: 4px; padding: 4px 8px; font: inherit;
   }
+  #upload { margin-top: 8px; }
+  #upload-status { margin-top: 4px; overflow-wrap: anywhere; }
   #coverage { padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 12px; }
   #coverage span { color: var(--muted); }
   #segment-filters {
@@ -180,6 +182,11 @@
       <h1 id="route">Loading…</h1>
       <div class="sub" id="generated"></div>
       <select id="route-select" title="Switch route"></select>
+      <div id="upload" hidden>
+        <button id="upload-button">Upload route</button>
+        <input id="upload-file" type="file" accept=".zip" hidden>
+        <div class="sub" id="upload-status"></div>
+      </div>
     </div>
     <button id="theme-toggle" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">
       <svg id="theme-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
@@ -492,11 +499,7 @@ function moduleRows(segment) {
   return MODULES.map((module) => {
     const entry = segment[module] || {};
     const detail = entry.notes ? entry.notes : metricsOf(entry);
-    // "delineation" alone would read as the full iRAP attribute; this
-    // module only ever measures the marking half of it (see
-    // irapCategoryLabel), so the row label says so up front.
-    const label = module === "delineation" ? "delineation (marking only)" : module;
-    return `<tr><td>${label}</td>`
+    return `<tr><td>${module}</td>`
          + `<td class="flag ${entry.flag}">${entry.flag ?? "-"}</td>`
          + `<td class="metrics">${irapCategoryLabel(module, entry)}</td>`
          + `<td class="metrics">${detail}</td>`
@@ -843,6 +846,68 @@ function loadRoute(routeId) {
 document.getElementById("route-select").addEventListener("change", (event) => {
   loadRoute(event.target.value);
 });
+
+// Upload exists only when the server can run the detectors. Any other server
+// answers /job with 404 and this control stays hidden.
+const uploadButton = document.getElementById("upload-button");
+const uploadFile = document.getElementById("upload-file");
+const uploadStatus = document.getElementById("upload-status");
+// Reload only for a job this page watched finish; otherwise a job that ended
+// earlier would reload the page every time it opened.
+let jobWatched = false;
+
+function showJob(job) {
+  document.getElementById("upload").hidden = false;
+  if (job.state === "running") {
+    jobWatched = true;
+    uploadButton.disabled = true;
+    const last = job.log.length ? ` - ${job.log[job.log.length - 1]}` : "";
+    uploadStatus.textContent =
+      `${job.route_id}: ${job.label} (${job.step}/${job.steps})${last}`;
+    setTimeout(pollJob, 1000);
+    return;
+  }
+  uploadButton.disabled = false;
+  if (job.state === "failed") {
+    uploadStatus.textContent = `${job.route_id}: ${job.label} failed - ${job.error}`;
+  } else if (job.state === "done" && jobWatched) {
+    localStorage.setItem(ROUTE_KEY, job.route_id);
+    location.reload();
+  }
+}
+
+function pollJob() {
+  fetch("job")
+    .then((response) => (response.ok ? response.json() : null))
+    .then((job) => { if (job) showJob(job); })
+    .catch(() => setTimeout(pollJob, 1000));
+}
+
+uploadButton.addEventListener("click", () => uploadFile.click());
+uploadFile.addEventListener("change", () => {
+  const file = uploadFile.files[0];
+  if (!file) return;
+  uploadFile.value = "";
+  uploadButton.disabled = true;
+  uploadStatus.textContent = `Uploading ${file.name}...`;
+  const name = file.name.replace(/\.zip$/i, "");
+  fetch(`upload?name=${encodeURIComponent(name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/zip" },
+    body: file,
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error(response.statusText);
+      return response.json();
+    })
+    .then(showJob)
+    .catch((error) => {
+      uploadButton.disabled = false;
+      uploadStatus.textContent = `Upload refused: ${error.message}`;
+    });
+});
+
+pollJob();
 
 // routes.json exists only for a scanned directory of routes; a single-route
 // export has no such file, and 404/network failure both read the same way

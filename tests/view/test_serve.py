@@ -7,9 +7,21 @@ land, since a mistake here is a silent 404 or, worse, a path escaping the
 route directory entirely.
 """
 
+import json
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+import zipfile
 from pathlib import Path
 
+import pytest
+
+from irap_screening.config import load_config
+from irap_screening.view.jobs import Upload
 from irap_screening.view.serve import (
+    _make_server,
     _resolve_multi_path,
     _resolve_path,
     _review_write_target,
@@ -140,3 +152,173 @@ def test_multi_review_write_target_rejects_an_unknown_route():
 
 def test_multi_review_write_target_rejects_a_bare_route_id():
     assert _review_write_target_multi("/route_a", ROUTE_DIRS) is None
+
+
+FAIL = [sys.executable, "-c", "print('boom'); raise SystemExit(3)"]
+ROUTE_FILES = {
+    "frames.csv": b"x",
+    "gps.csv": b"x",
+    "imu.csv": b"x",
+    "frames/f_000000.jpg": b"x",
+}
+
+
+def _zip_bytes(tmp_path, files):
+    path = tmp_path / "upload.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+    return path.read_bytes()
+
+
+@pytest.fixture
+def server(tmp_path):
+    """A live server on a free port; yields (base_url, upload)."""
+    routes = tmp_path / "routes"
+    routes.mkdir()
+    upload = Upload(
+        routes_root=routes,
+        out_dir=routes / "view",
+        cfg=load_config(),
+        lane_command=FAIL,
+        sign_command=FAIL,
+    )
+    httpd = _make_server(
+        tmp_path,
+        lambda path, out: _resolve_multi_path(path, out, upload.route_dirs),
+        lambda path: None,
+        0,
+        upload,
+    )
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", upload
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def _request(url, body=None):
+    request = urllib.request.Request(url, data=body, method="POST" if body is not None else "GET")
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.status, json.loads(response.read()), response.reason
+    except urllib.error.HTTPError as error:
+        return error.code, None, error.reason
+
+
+def _settled(base):
+    for _ in range(200):
+        status = _request(f"{base}/job")[1]
+        if status["state"] != "running":
+            return status
+        time.sleep(0.05)
+    raise AssertionError("job never settled")
+
+
+def test_job_status_is_not_served_without_upload(tmp_path):
+    httpd = _make_server(tmp_path, lambda path, out: out / "nothing", lambda path: None, 0)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        assert _request(f"http://127.0.0.1:{httpd.server_address[1]}/job")[0] == 404
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_job_status_starts_idle(server):
+    base, _ = server
+    code, status, _ = _request(f"{base}/job")
+    assert (code, status["state"]) == (200, "idle")
+
+
+def test_an_upload_starts_a_job_and_extracts_the_route(server, tmp_path):
+    base, upload = server
+
+    code, status, _ = _request(f"{base}/upload?name=r1", _zip_bytes(tmp_path, ROUTE_FILES))
+
+    assert (code, status["route_id"]) == (202, "r1")
+    final = _settled(base)
+    # The stub lane detector fails, which is as far as a test without models goes.
+    assert (final["state"], final["label"], final["error"]) == ("failed", "Lane detection", "boom")
+    assert (upload.routes_root / "r1" / "frames" / "f_000000.jpg").exists()
+
+
+def test_a_body_larger_than_one_chunk_arrives_intact(server, tmp_path):
+    base, upload = server
+    big = bytes(range(256)) * (3 * 4096)  # 3 MiB, stored uncompressed
+    body = _zip_bytes(tmp_path, {**ROUTE_FILES, "frames/big.bin": big})
+
+    assert _request(f"{base}/upload?name=big", body)[0] == 202
+    _settled(base)
+
+    assert (upload.routes_root / "big" / "frames" / "big.bin").read_bytes() == big
+
+
+@pytest.mark.parametrize("name", ["kuching%2001", "a%2Fb", "", "%E8%B7%AF"])
+def test_a_name_that_is_not_a_route_id_is_refused_before_anything_is_written(
+    server, tmp_path, name
+):
+    base, upload = server
+
+    code, _, reason = _request(f"{base}/upload?name={name}", _zip_bytes(tmp_path, ROUTE_FILES))
+
+    assert code == 400
+    assert "letters, digits" in reason
+    assert list(upload.routes_root.iterdir()) == []
+
+
+def test_a_name_already_taken_is_refused_and_says_what_to_delete(server, tmp_path):
+    base, upload = server
+    (upload.routes_root / "r1").mkdir()
+
+    code, _, reason = _request(f"{base}/upload?name=r1", _zip_bytes(tmp_path, ROUTE_FILES))
+
+    assert code == 409
+    assert "already exists" in reason and "delete" in reason
+
+
+def test_a_route_left_by_a_failed_job_blocks_a_retry_under_the_same_name(server, tmp_path):
+    base, _ = server
+    body = _zip_bytes(tmp_path, ROUTE_FILES)
+    _request(f"{base}/upload?name=r1", body)
+    _settled(base)
+
+    assert _request(f"{base}/upload?name=r1", body)[0] == 409
+
+
+@pytest.mark.parametrize("length", ["abc", "-1", "0"])
+def test_a_content_length_that_is_not_a_positive_number_is_refused(server, length):
+    import http.client
+
+    base, upload = server
+    connection = http.client.HTTPConnection(base.removeprefix("http://"), timeout=20)
+    connection.putrequest("POST", "/upload?name=r1")
+    connection.putheader("Content-Length", length)
+    connection.endheaders()
+
+    assert connection.getresponse().status == 400
+    assert list(upload.routes_root.iterdir()) == []
+
+
+def test_a_connection_reset_mid_upload_leaves_no_temporary_zip(server, tmp_path, monkeypatch):
+    import socket
+    import struct
+    import tempfile
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    base, _ = server
+    host, port = base.removeprefix("http://").split(":")
+
+    client = socket.create_connection((host, int(port)))
+    client.sendall(b"POST /upload?name=r1 HTTP/1.1\r\nContent-Length: 1000000\r\n\r\npartial")
+    time.sleep(0.3)  # let the handler create its temporary file and block reading
+    # Linger 0 makes close() send a reset rather than a clean end of stream.
+    client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("hh", 1, 0))
+    client.close()
+
+    for _ in range(100):
+        if not list(scratch.iterdir()):
+            break
+        time.sleep(0.05)
+    assert list(scratch.iterdir()) == []
