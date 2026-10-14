@@ -165,34 +165,29 @@ def test_no_overtaking_sign_alone_satisfies_the_grade_rule():
     assert recs.get("R01-0003", []) == []
 
 
-def test_compound_curve_and_grade_is_highest_priority():
+def test_a_critical_curve_on_a_critical_grade_adds_no_rule_of_its_own():
+    """Only missing mitigations are recommended; the combination names none."""
     segments = _segments()
     recs = run_gapcheck(
         segments,
         _module_results(segments, curvature=Flag.CRITICAL, grade=Flag.CRITICAL),
         _existence(segments), CFG,
     )
-    rules = {r.rule for r in recs["R01-0003"]}
-    assert "compound_curve_on_grade" in rules
-    compound = next(r for r in recs["R01-0003"] if r.rule == "compound_curve_on_grade")
-    assert compound.priority == "highest"
+    rules = sorted(r.rule for r in recs["R01-0003"])
+    assert rules == ["curve_warning_incomplete", "grade_overtaking_control_missing"]
 
 
-def test_poor_lane_marking_raises_priority_without_adding_a_recommendation():
+def test_recommendations_carry_no_priority():
+    """Priority was dropped: every rule's output is a gap, not a ranking."""
     segments = _segments()
-    plain = run_gapcheck(
-        segments, _module_results(segments, curvature=Flag.CRITICAL),
-        _existence(segments), CFG,
-    )
-    raised = run_gapcheck(
+    recs = run_gapcheck(
         segments,
         _module_results(segments, curvature=Flag.CRITICAL, delineation=Flag.CRITICAL),
         _existence(segments), CFG,
     )
-    assert len(raised["R01-0003"]) == len(plain["R01-0003"])
-    assert raised["R01-0003"][0].priority_raised_by == ["lane_marking_worst_band"]
-    assert raised["R01-0003"][0].priority == "highest"
-    assert plain["R01-0003"][0].priority == "high"
+    dumped = recs["R01-0003"][0].model_dump()
+    assert "priority" not in dumped
+    assert "priority_raised_by" not in dumped
 
 
 def test_not_assessed_never_triggers_a_rule():
