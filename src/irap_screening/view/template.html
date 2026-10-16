@@ -532,7 +532,19 @@ function moduleRows(segment) {
          + `<td class="metrics">${irapCategoryLabel(module, entry)}</td>`
          + `<td class="metrics">${detail}</td>`
          + `<td class="review-cell">${reviewCell(segment, module, entry)}</td></tr>`;
-  }).join("");
+  }).join("") + qualityOfCurveRow(segment);
+}
+
+const QUALITY_OF_CURVE_LABELS = { 1: "1 Adequate", 2: "2 Poor", 3: "3 Not applicable" };
+
+// Derived from curvature, delineation and signs rather than scored, so it has
+// no flag and no review of its own. Older reports lack the field entirely.
+function qualityOfCurveRow(segment) {
+  const quality = segment.quality_of_curve;
+  if (!quality) return "";
+  return `<tr><td>quality of curve</td><td>-</td>`
+       + `<td class="metrics">${QUALITY_OF_CURVE_LABELS[quality.code] ?? "not assessed"}</td>`
+       + `<td class="metrics">${quality.basis}</td><td></td></tr>`;
 }
 
 // Delegated on document: renderDetail() replaces the whole panel on every

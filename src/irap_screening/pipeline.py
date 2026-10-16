@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from irap_screening.config import Settings
+from irap_screening.decision.curve_quality import code_quality_of_curve
 from irap_screening.decision.gapcheck import run_gapcheck
 from irap_screening.decision.report import SCORING_MODULES, build_report
 from irap_screening.io.align import align_route
@@ -72,8 +73,10 @@ def run_pipeline(route_dir: Path, cfg: Settings, route_id: str = "R01") -> dict[
         grade_results=module_results["grade"],
     )
     recommendations = run_gapcheck(segments, module_results, existence, cfg)
+    quality = code_quality_of_curve(segments, module_results, existence, cfg)
 
     return build_report(
-        route_id, segments, module_results, existence, recommendations, cfg
+        route_id, segments, module_results, existence, recommendations, cfg,
+        quality_of_curve=quality,
     )
 

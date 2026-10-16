@@ -18,6 +18,8 @@ the hazardous stretch, not before it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from irap_screening.config import Settings
 from irap_screening.io.schema import (
     ExistenceResult,
@@ -35,10 +37,19 @@ CHEVRON_CLASS = "Chevron"
 NO_OVERTAKING_CLASS = "No overtaking"
 
 
+def _is_critical(result: ModuleResult) -> bool:
+    return result.flag is Flag.CRITICAL
+
+
 def curve_spans(
-    segments: list[Segment], module_results: dict[str, list[ModuleResult]]
+    segments: list[Segment],
+    module_results: dict[str, list[ModuleResult]],
+    is_curve: Callable[[ModuleResult], bool] = _is_critical,
 ) -> dict[str, tuple[float, float]]:
-    """Map each critical-curvature segment to the extent of the curve it belongs to.
+    """Map each curve segment to the extent of the curve it belongs to.
+
+    is_curve picks which curvature results count as curve; by default the
+    critical ones, which is what rule 1 warns about.
 
     The 100 m grid is iRAP's reporting unit, so a 300 m bend necessarily spans
     three of them, and each of those units genuinely carries a critical
@@ -51,15 +62,21 @@ def curve_spans(
     never assessed -- continuity cannot be claimed across a unit whose curvature
     is unknown.
     """
-    flags = [_flag_of(module_results, "curvature", s.segment_id) for s in segments]
+    by_id = _by_segment(module_results.get("curvature", []))
+    member = [
+        (result := by_id.get(s.segment_id)) is not None
+        and result.flag is not Flag.NOT_ASSESSED
+        and is_curve(result)
+        for s in segments
+    ]
     spans: dict[str, tuple[float, float]] = {}
     start = 0
     while start < len(segments):
-        if flags[start] is not Flag.CRITICAL:
+        if not member[start]:
             start += 1
             continue
         end = start
-        while end + 1 < len(segments) and flags[end + 1] is Flag.CRITICAL:
+        while end + 1 < len(segments) and member[end + 1]:
             end += 1
         extent = (segments[start].start_m, segments[end].end_m)
         for segment in segments[start : end + 1]:

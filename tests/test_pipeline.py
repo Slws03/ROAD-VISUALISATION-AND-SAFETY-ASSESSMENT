@@ -106,6 +106,12 @@ def test_pipeline_recommends_the_missing_curve_warning(tmp_path: Path):
     assert set(entry["missing"]) == {"advance_bend_sign", "chevron"}
 
 
+def test_pipeline_codes_the_unsigned_curve_as_poor_quality(tmp_path: Path):
+    _write_route(tmp_path)
+    report = run_pipeline(tmp_path, load_config())
+    assert report["segments"][0]["quality_of_curve"]["code"] == 2
+
+
 def test_missing_pothole_detections_do_not_break_the_run(tmp_path: Path):
     """Road Condition is stubbable by design."""
     _write_route(tmp_path)
