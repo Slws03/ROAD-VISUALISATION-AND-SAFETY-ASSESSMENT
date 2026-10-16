@@ -168,7 +168,7 @@
     padding: 10px 14px; margin-bottom: 10px; max-width: 900px; border-radius: 0 4px 4px 0;
   }
   .rec .rule { font-weight: 600; }
-  .rec .detail { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .rec .text { margin-top: 4px; line-height: 1.5; }
   h2 { font-size: 13px; color: var(--muted); font-weight: 500;
        text-transform: uppercase; letter-spacing: .04em; margin: 22px 0 8px; }
   code { background: var(--surface2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
@@ -294,16 +294,44 @@ function worstFlag(segment) {
 function flagSummary(segment) {
   return MODULES.map((module) => {
     const flag = (segment[module] && segment[module].flag) ?? "not_assessed";
-    return `${module}: ${flag}`;
+    return `${module}: ${flagText(flag)}`;
   }).join(" · ");
 }
 
+// Display text only: the stored flag, and the CSS class built from it, stay
+// "not_assessed".
+function flagText(flag) {
+  return flag ? flag.replace("_", " ") : "-";
+}
+
+// Display only: each stored metric gets a label and the unit a reader
+// expects. A key not listed here still shows, with its underscores dropped.
+const DEG_PER_RAD = 180 / Math.PI;
+const METRIC_TEXT = {
+  radius_m: (v) => `Curve radius ${Math.round(v)} m`,
+  yaw_rate_rad_s: (v) => `Turn rate ${(v * DEG_PER_RAD).toFixed(1)}°/s`,
+  mean_speed_mps: (v) => `Mean speed ${Math.round(v * 3.6)} km/h`,
+  gyro_bias_rad_s: (v) => `Gyro bias ${(v * DEG_PER_RAD).toFixed(2)}°/s`,
+  grade_pct: (v) => `Grade ${v.toFixed(1)}%`,
+  pitch_deg: (v) => `Pitch ${v.toFixed(1)}°`,
+  // The segment's minimum across its frames (lane.py), hence "lowest".
+  weber_contrast: (v) => `Lowest marking contrast ${v.toFixed(2)} (Weber)`,
+};
+// Shown elsewhere (iRAP category column) or folded into one phrase below.
+const UNLISTED_METRICS = new Set(
+  ["irap_category", "detection_rate", "detected_frames", "total_frames"]);
+
 function metricsOf(entry) {
-  return Object.entries(entry)
-    .filter(([key, value]) => key !== "flag" && key !== "notes" && key !== "irap_category"
-                              && typeof value === "number")
-    .map(([key, value]) => `${key}=${Number(value.toFixed(3))}`)
-    .join("  ");
+  const parts = Object.entries(entry)
+    .filter(([key, value]) => typeof value === "number" && !UNLISTED_METRICS.has(key))
+    .map(([key, value]) => METRIC_TEXT[key]
+      ? METRIC_TEXT[key](value)
+      : `${key.replace(/_/g, " ")} ${Number(value.toFixed(3))}`);
+  if (entry.total_frames != null) {
+    parts.push(`Lanes detected in ${entry.detected_frames} of ${entry.total_frames} frames`
+             + ` (${Math.round(entry.detection_rate * 100)}%)`);
+  }
+  return parts.join(" · ");
 }
 
 // iRAP's own descriptive band tables (Coding Manual). Display only -- these
@@ -480,7 +508,7 @@ function reviewCell(segment, module, entry) {
   const verdict = review ? review.verdict : "";
   const note = review ? review.note : "";
   const status = review
-    ? `<div class="review-status">saved: ${review.verdict} &middot; `
+    ? `<div class="review-status">saved: ${review.verdict === "ok" ? "OK" : "Flag"} &middot; `
       + `${new Date(review.reviewed_at).toLocaleString()}</div>`
     : "";
   return `<div class="review" data-module="${module}">`
@@ -500,11 +528,23 @@ function moduleRows(segment) {
     const entry = segment[module] || {};
     const detail = entry.notes ? entry.notes : metricsOf(entry);
     return `<tr><td>${module}</td>`
-         + `<td class="flag ${entry.flag}">${entry.flag ?? "-"}</td>`
+         + `<td class="flag ${entry.flag}">${flagText(entry.flag)}</td>`
          + `<td class="metrics">${irapCategoryLabel(module, entry)}</td>`
          + `<td class="metrics">${detail}</td>`
          + `<td class="review-cell">${reviewCell(segment, module, entry)}</td></tr>`;
-  }).join("");
+  }).join("") + qualityOfCurveRow(segment);
+}
+
+const QUALITY_OF_CURVE_LABELS = { 1: "1 Adequate", 2: "2 Poor", 3: "3 Not applicable" };
+
+// Derived from curvature, delineation and signs rather than scored, so it has
+// no flag and no review of its own. Older reports lack the field entirely.
+function qualityOfCurveRow(segment) {
+  const quality = segment.quality_of_curve;
+  if (!quality) return "";
+  return `<tr><td>quality of curve</td><td>-</td>`
+       + `<td class="metrics">${QUALITY_OF_CURVE_LABELS[quality.code] ?? "not assessed"}</td>`
+       + `<td class="metrics">${quality.basis}</td><td></td></tr>`;
 }
 
 // Delegated on document: renderDetail() replaces the whole panel on every
@@ -557,9 +597,10 @@ function signsBlock(segment) {
          + `Double line: ${doubleLineText(dl)}`
          + `</p>`;
   }
-  return `<table><tr><th>class</th><th>conf</th><th>at</th></tr>`
+  return `<table><tr><th>sign</th><th>confidence</th><th>distance along route</th></tr>`
        + segment.signs.map((sign) =>
-           `<tr><td>${sign.cls}</td><td class="metrics">${sign.conf.toFixed(2)}</td>`
+           `<tr><td>${sign.cls === "other_sign" ? "Other sign" : sign.cls}</td>`
+         + `<td class="metrics">${sign.conf.toFixed(2)}</td>`
          + `<td class="metrics">${Math.round(sign.at_m)} m</td></tr>`).join("")
        + `</table>`;
 }
@@ -569,10 +610,51 @@ function recommendationsBlock(segment) {
     return `<p class="metrics">No gap found: every matching mitigation is present.</p>`;
   }
   return segment.recommendations.map((rec) =>
-    `<div class="rec"><div class="rule">${rec.priority} · ${rec.rule}</div>`
-  + `<div class="detail">${rec.text}</div>`
-  + `<div class="detail">missing: ${rec.missing.join(", ") || "-"} · `
-  + `present: ${rec.present.join(", ") || "-"}</div></div>`).join("");
+    `<div class="rec"><div class="rule">${RULE_TITLE[rec.rule] ?? rec.rule}</div>`
+  + `<div class="text">${recommendationText(rec)}</div></div>`).join("");
+}
+
+// Display only: the sentences are built from each recommendation's structured
+// fields, worded no more strongly than gapcheck.py's rules check. A rule this
+// page does not know falls back to gapcheck.py's own text.
+const RULE_TITLE = {
+  curve_warning_incomplete: "Curve warning incomplete",
+  grade_overtaking_control_missing: "No overtaking control on a critical grade",
+};
+// The two curve signs are searched in different places: the advance sign in a
+// window before the curve's entry, chevrons only within this segment.
+const MITIGATION_TEXT = {
+  advance_bend_sign: "an advance bend warning sign before the curve",
+  chevron: "chevron alignment markers in this segment",
+};
+
+function listText(items, word) {
+  if (items.length < 2) return items.join("");
+  return `${items.slice(0, -1).join(", ")} ${word} ${items[items.length - 1]}`;
+}
+
+function recommendationText(rec) {
+  const trigger = rec.trigger || {};
+  const named = (keys) => keys.map((key) => MITIGATION_TEXT[key] ?? key);
+  let text;
+  if (rec.rule === "curve_warning_incomplete") {
+    // radius_m is this segment's own; the start and end span the whole bend.
+    // gapcheck.py writes 0 when the radius is missing, so it is left out then.
+    const radius = trigger.radius_m
+      ? ` Its radius in this segment is about ${Math.round(trigger.radius_m)} m.` : "";
+    text = `This segment lies on a critical curve that runs from `
+         + `${Math.round(trigger.curve_start_m)} m to ${Math.round(trigger.curve_end_m)} m `
+         + `along the route.${radius} `
+         + `The detector did not find ${listText(named(rec.missing), "or")}.`;
+    if (rec.present.length) text += ` It did find ${listText(named(rec.present), "and")}.`;
+  } else if (rec.rule === "grade_overtaking_control_missing") {
+    const grade = trigger.grade_pct ? ` (${trigger.grade_pct.toFixed(1)}%)` : "";
+    text = `This segment has a critical grade${grade}, and no overtaking control `
+         + `was detected: neither a No overtaking sign nor a double centre line.`;
+  } else {
+    text = rec.text;
+  }
+  return text;
 }
 
 const LANE_COLOR = "#3fb950";

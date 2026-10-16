@@ -56,6 +56,7 @@ def build_report(
     existence: list[ExistenceResult],
     recommendations: dict[str, list[Recommendation]],
     cfg: Settings,
+    quality_of_curve: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Assemble the full structured report."""
     indexed = {name: _index(results) for name, results in module_results.items()}
@@ -82,6 +83,13 @@ def build_report(
             if record[name]["flag"] == Flag.NOT_ASSESSED.value:
                 coverage[name]["not_assessed"] += 1
                 uncovered = True
+
+        # Derived attribute, not a scoring module: it has no flag and does not
+        # count toward coverage.
+        if quality_of_curve is not None:
+            record["quality_of_curve"] = quality_of_curve.get(
+                segment.segment_id, {"code": None, "basis": ""}
+            )
 
         entry = existence_by_segment.get(segment.segment_id)
         record["signs"] = (
@@ -169,9 +177,7 @@ def to_markdown(report: dict[str, Any]) -> str:
             # text already names the missing mitigations in a full sentence; fall
             # back to the bare list only when a rule supplies no text.
             detail = recommendation["text"] or f"missing: {missing}."
-            lines.append(
-                f"- **{recommendation['priority']}** - {recommendation['rule']} - {detail}"
-            )
+            lines.append(f"- {recommendation['rule']} - {detail}")
         lines.append("")
     return "\n".join(lines) + "\n"
 

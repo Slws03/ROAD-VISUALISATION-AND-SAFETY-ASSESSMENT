@@ -172,6 +172,4 @@ class Recommendation(BaseModel):
     trigger: dict[str, float | str] = Field(default_factory=dict)
     missing: list[str] = Field(default_factory=list)
     present: list[str] = Field(default_factory=list)
-    priority: str = "medium"
-    priority_raised_by: list[str] = Field(default_factory=list)
     text: str = ""

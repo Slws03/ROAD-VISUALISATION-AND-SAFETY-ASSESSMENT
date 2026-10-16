@@ -72,7 +72,7 @@ def _fixture():
                 rule="curve_warning_incomplete",
                 trigger={"module": "curvature", "radius_m": 312.5},
                 missing=["chevron"], present=["advance_bend_sign"],
-                priority="high", text="Curve is missing chevron markers.",
+                text="Curve is missing chevron markers.",
             )
         ],
         "R01-0001": [],

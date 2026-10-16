@@ -18,6 +18,8 @@ the hazardous stretch, not before it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from irap_screening.config import Settings
 from irap_screening.io.schema import (
     ExistenceResult,
@@ -34,18 +36,20 @@ ADVANCE_BEND_CLASSES = frozenset({"Bend", "Double Bend"})
 CHEVRON_CLASS = "Chevron"
 NO_OVERTAKING_CLASS = "No overtaking"
 
-_PRIORITY_LADDER = ["low", "medium", "high", "highest"]
 
-
-def _raise_priority(current: str) -> str:
-    index = _PRIORITY_LADDER.index(current)
-    return _PRIORITY_LADDER[min(index + 1, len(_PRIORITY_LADDER) - 1)]
+def _is_critical(result: ModuleResult) -> bool:
+    return result.flag is Flag.CRITICAL
 
 
 def curve_spans(
-    segments: list[Segment], module_results: dict[str, list[ModuleResult]]
+    segments: list[Segment],
+    module_results: dict[str, list[ModuleResult]],
+    is_curve: Callable[[ModuleResult], bool] = _is_critical,
 ) -> dict[str, tuple[float, float]]:
-    """Map each critical-curvature segment to the extent of the curve it belongs to.
+    """Map each curve segment to the extent of the curve it belongs to.
+
+    is_curve picks which curvature results count as curve; by default the
+    critical ones, which is what rule 1 warns about.
 
     The 100 m grid is iRAP's reporting unit, so a 300 m bend necessarily spans
     three of them, and each of those units genuinely carries a critical
@@ -58,15 +62,21 @@ def curve_spans(
     never assessed -- continuity cannot be claimed across a unit whose curvature
     is unknown.
     """
-    flags = [_flag_of(module_results, "curvature", s.segment_id) for s in segments]
+    by_id = _by_segment(module_results.get("curvature", []))
+    member = [
+        (result := by_id.get(s.segment_id)) is not None
+        and result.flag is not Flag.NOT_ASSESSED
+        and is_curve(result)
+        for s in segments
+    ]
     spans: dict[str, tuple[float, float]] = {}
     start = 0
     while start < len(segments):
-        if flags[start] is not Flag.CRITICAL:
+        if not member[start]:
             start += 1
             continue
         end = start
-        while end + 1 < len(segments) and flags[end + 1] is Flag.CRITICAL:
+        while end + 1 < len(segments) and member[end + 1]:
             end += 1
         extent = (segments[start].start_m, segments[end].end_m)
         for segment in segments[start : end + 1]:
@@ -99,7 +109,7 @@ def run_gapcheck(
     existence: list[ExistenceResult],
     cfg: Settings,
 ) -> dict[str, list[Recommendation]]:
-    """Apply rules 1 to 4 and return recommendations keyed by segment id."""
+    """Apply rules 1 and 2 and return recommendations keyed by segment id."""
     existence_by_segment = {entry.segment_id: entry for entry in existence}
     all_signs: list[SignRecord] = [sign for entry in existence for sign in entry.signs]
 
@@ -109,7 +119,6 @@ def run_gapcheck(
     for segment in segments:
         curvature_flag = _flag_of(module_results, "curvature", segment.segment_id)
         grade_flag = _flag_of(module_results, "grade", segment.segment_id)
-        delineation_flag = _flag_of(module_results, "delineation", segment.segment_id)
         entry = existence_by_segment.get(segment.segment_id)
 
         # Rule 1: a critical curve needs an advance warning sign AND chevrons.
@@ -159,7 +168,6 @@ def run_gapcheck(
                         },
                         missing=missing,
                         present=present,
-                        priority="high",
                         text=(
                             f"Curve (R={radius:.0f} m) is missing: {', '.join(missing)}."
                             if radius
@@ -185,7 +193,6 @@ def run_gapcheck(
                         trigger={"module": "grade", "grade_pct": grade_pct or 0.0},
                         missing=["no_overtaking_sign", "double_line"],
                         present=[],
-                        priority="high",
                         text=(
                             f"Steep grade ({grade_pct:.1f} percent) has no overtaking "
                             "control: neither a No overtaking sign nor a double line."
@@ -194,26 +201,5 @@ def run_gapcheck(
                         ),
                     )
                 )
-
-        # Rule 3: a curve on a steep grade compounds the risk.
-        if curvature_flag is Flag.CRITICAL and grade_flag is Flag.CRITICAL:
-            recommendations[segment.segment_id].append(
-                Recommendation(
-                    rule="compound_curve_on_grade",
-                    trigger={"module": "curvature+grade"},
-                    missing=[],
-                    present=[],
-                    priority="highest",
-                    text="Critical curve on a critical grade; inspect as a priority.",
-                )
-            )
-
-        # Rule 4: worst-band lane marking raises priority but adds nothing new.
-        # It corresponds to no iRAP countermeasure, so turning it into a
-        # recommendation of its own would overclaim.
-        if delineation_flag is Flag.CRITICAL:
-            for recommendation in recommendations[segment.segment_id]:
-                recommendation.priority = _raise_priority(recommendation.priority)
-                recommendation.priority_raised_by.append("lane_marking_worst_band")
 
     return recommendations
