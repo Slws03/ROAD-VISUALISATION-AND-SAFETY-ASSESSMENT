@@ -35,6 +35,33 @@ ORI_IMG_W, ORI_IMG_H = 1241, 376  # CLRerNet's reference geometry
 # irap import-lanes rejects a dump that violates this.
 CONF_THRESHOLD = 0.10
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+# CULane, which the weights were trained on: 1640x590 frames with the top 270
+# rows cut, so the model learned roads framed at 1640:320 before the resize.
+TRAIN_ASPECT = 1640 / (590 - 270)
+
+
+def auto_crop_top(width: int, height: int, crop_bottom: float = 0.0) -> float:
+    """Fraction of the height to cut from the top so the kept band is CULane-shaped.
+
+    Frames arrive in whatever size the camera wrote. Keeping a band of
+    width / TRAIN_ASPECT rows gives the model the framing it was trained on,
+    whatever that size: on 16:9 phone footage it cuts about 65% (the
+    horizon sits near there), on KITTI about 36%. It assumes, as CULane
+    does, that the road fills the bottom of the frame -- no bonnet; cut one
+    with crop_bottom. A frame too wide for the band keeps every row.
+
+    The result is snapped to a whole row of CLRerNet's reference height,
+    because cut_height is an integer and irap import-lanes requires
+    cut_height / ORI_IMG_H to equal crop_top.
+    """
+    if height >= width:
+        raise SystemExit(
+            f"{width}x{height} is portrait; CLRerNet expects landscape road footage. "
+            "Pass --crop-top explicitly to run it anyway."
+        )
+    kept = width / TRAIN_ASPECT / height
+    crop_top = max(0.0, 1.0 - crop_bottom - kept)
+    return round(ORI_IMG_H * crop_top) / ORI_IMG_H
 
 
 def build_payload(frame_results: list[dict], meta: dict) -> dict:
@@ -69,8 +96,9 @@ def main() -> None:
     parser.add_argument("--route", type=Path, required=True, help="directory holding frames/")
     parser.add_argument("--out", type=Path, help="default: ROUTE/clrernet_raw.json")
     parser.add_argument("--clrernet", type=Path, default=DEFAULT_CLRERNET)
-    parser.add_argument("--crop-top", type=float, default=0.25,
-                        help="fraction of image height removed from the top")
+    parser.add_argument("--crop-top", default="auto",
+                        help="fraction of image height removed from the top; default "
+                             "'auto' derives it from the frame size (see auto_crop_top)")
     parser.add_argument("--crop-bottom", type=float, default=0.0,
                         help="fraction removed from the bottom (bonnet, dashboard)")
     parser.add_argument("--device", default=None, help="default: cuda:0 if available, else cpu")
@@ -85,10 +113,22 @@ def main() -> None:
     if not (clrernet / CONFIG).exists():
         raise SystemExit(f"No CLRerNet checkout at {clrernet}; run scripts/clrernet/setup.ps1")
 
+    import cv2
+
+    # The dump carries one crop_top for the whole route, applied as a fraction
+    # of each frame's own height. Routes mix sizes (phone stills at 960x544 and
+    # 1920x1080), which is fine while every frame's own auto crop is close to
+    # the one applied; that is checked as each frame is read below.
+    auto = args.crop_top == "auto"
+    if auto:
+        first_h, first_w = cv2.imread(str(images[0]), cv2.IMREAD_COLOR).shape[:2]
+        args.crop_top = auto_crop_top(first_w, first_h, args.crop_bottom)
+    else:
+        args.crop_top = float(args.crop_top)
+
     # The pure-NumPy `nms` package beside this file must win over anything else
     # of that name; CLRerNet's head imports it by bare name.
     sys.path[:0] = [str(HERE), str(clrernet), str(clrernet / "libs")]
-    import cv2
     import numpy as np
     import torch
     from mmdet.registry import MODELS
@@ -154,6 +194,13 @@ def main() -> None:
         img = cv2.imread(str(path), cv2.IMREAD_COLOR)
         if img is None:
             raise SystemExit(f"Failed to read image: {path}")
+        own = auto and auto_crop_top(img.shape[1], img.shape[0], args.crop_bottom)
+        if auto and abs(own - args.crop_top) > 0.01:
+            raise SystemExit(
+                f"{path.name} ({img.shape[1]}x{img.shape[0]}) wants crop_top {own:.3f}, but "
+                f"{images[0].name} set {args.crop_top:.3f} for the route; one route takes "
+                "one crop, so split it or pass --crop-top"
+            )
         result = run(img)
         scores = result.get("scores", [])
         if hasattr(scores, "cpu"):
