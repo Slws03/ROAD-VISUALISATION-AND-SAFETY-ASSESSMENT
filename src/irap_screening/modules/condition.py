@@ -3,8 +3,9 @@
 The full implementation estimates defect width by projecting image points onto the
 road plane (intrinsics, mounting height and pitch), then classifies by segment-wide
 defect count against the iRAP Road Condition table. It is deferred: the camera
-parameters it needs are not available, so ipm.camera_height_m is still null in the
-configuration.
+parameters it needs are not available, so its thresholds (defect confidence, width
+boundary, count bands, camera intrinsics) were taken out of the configuration until
+the module is built.
 
 Reporting not_assessed for every segment is deliberate. It keeps the attribute
 visible in the report's coverage statistics instead of letting a missing fourth

@@ -15,13 +15,6 @@ def test_defaults_load_from_packaged_yaml():
     assert cfg.lane.clrernet_conf == 0.41
 
 
-def test_aggregation_is_per_module_not_global():
-    """Road Condition counts over the whole segment; the others take the worst sample."""
-    cfg = load_config()
-    assert cfg.segment.aggregation.lane == "max_risk"
-    assert cfg.segment.aggregation.condition == "count_then_classify"
-
-
 def test_cli_override_wins_and_is_recorded_in_provenance():
     cfg = load_config(overrides=["curvature.threshold_m=350"])
     assert cfg.curvature.threshold_m == 350

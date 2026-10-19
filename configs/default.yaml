@@ -3,20 +3,6 @@
 
 segment:
   length_m: 100                  # iRAP coding unit (Star Rating manual)
-  # Aggregation is per-module, never global.
-  # Road Condition counts defects across the whole segment before classifying;
-  # implementing it as max-over-frames makes count always 1 and silently
-  # prevents the iRAP 5-vs-1-4 boundary from ever firing.
-  aggregation:
-    lane: max_risk
-    curvature: max_risk
-    grade: max_risk
-    condition: count_then_classify
-
-sampling:
-  target_spacing_m: 20           # PLACEHOLDER: derive from per-frame detectable
-                                 # ground footprint (FOV, mount height, range)
-                                 # once camera parameters are known
 
 curvature:
   threshold_m: 400               # iRAP Curvature Risk Factor boundary (provisional)
@@ -83,19 +69,6 @@ sign:
                                  # which over-reports missing signs rather than
                                  # under-reporting them.
   imgsz: 1280                    # matches the training run (args.yaml imgsz: 1280)
-
-condition:
-  yolo_conf: 0.35
-  width_threshold_cm: 20         # iRAP size boundary
-  count_poor: 5                  # >= this many qualifying defects -> critical
-  count_medium: 1                # 1..4 qualifying defects -> watch
-  ipm:
-    camera_height_m: null        # REQUIRED from data provider; null disables width
-    fx: null
-    fy: null
-    cx: null
-    cy: null
-    max_range_m: 15.0            # width estimated only within this near-field band
 
 gapcheck:
   curve_sign_distance_m: 230     # JKR: bend sign placed 230 m before curve entry
