@@ -103,12 +103,12 @@ class Settings(_Section):
     provenance: dict[str, str] = Field(default_factory=dict, exclude=True)
 
 
-def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+def flatten(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     flat: dict[str, Any] = {}
     for key, value in data.items():
         dotted = f"{prefix}{key}"
         if isinstance(value, dict):
-            flat.update(_flatten(value, prefix=f"{dotted}."))
+            flat.update(flatten(value, prefix=f"{dotted}."))
         else:
             flat[dotted] = value
     return flat
@@ -150,14 +150,14 @@ def load_config(
     with default_path.open(encoding="utf-8") as handle:
         base = yaml.safe_load(handle) or {}
 
-    provenance = dict.fromkeys(_flatten(base), "default")
+    provenance = dict.fromkeys(flatten(base), "default")
     merged = base
 
     if profile is not None:
         with Path(profile).open(encoding="utf-8") as handle:
             profile_data = yaml.safe_load(handle) or {}
         merged = _deep_merge(merged, profile_data)
-        provenance.update(dict.fromkeys(_flatten(profile_data), "profile"))
+        provenance.update(dict.fromkeys(flatten(profile_data), "profile"))
 
     for item in overrides or []:
         dotted, value = _parse_override(item)

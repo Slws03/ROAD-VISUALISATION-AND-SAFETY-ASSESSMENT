@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from irap_screening.config import load_config
-from irap_screening.view.jobs import Upload
+from irap_screening.view.jobs import Rebuild, Upload
 from irap_screening.view.serve import (
     _make_server,
     _resolve_multi_path,
@@ -322,3 +322,60 @@ def test_a_connection_reset_mid_upload_leaves_no_temporary_zip(server, tmp_path,
             break
         time.sleep(0.05)
     assert list(scratch.iterdir()) == []
+
+
+@pytest.fixture
+def config_server(tmp_path):
+    """A live server with a config panel and no routes; yields (base_url, rebuild)."""
+    upload = Upload(
+        routes_root=tmp_path, out_dir=tmp_path, cfg=load_config(),
+        lane_command=FAIL, sign_command=FAIL,
+    )
+    startup = ["grade.threshold_pct=8"]  # as `irap view --set` would pass it
+    rebuild = Rebuild(tmp_path, load_config(overrides=startup), overrides=startup, upload=upload)
+    httpd = _make_server(
+        tmp_path, lambda path, out: out / "x", lambda path: None, 0, upload, rebuild
+    )
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", rebuild
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def _post_json(url, payload):
+    return _request(url, json.dumps(payload).encode("utf-8"))
+
+
+def test_config_lists_every_threshold_with_its_source(config_server):
+    base, _ = config_server
+    code, state, _ = _request(f"{base}/config")
+    assert code == 200
+    assert state["values"]["curvature.threshold_m"] == 400
+    assert state["sources"]["curvature.threshold_m"] == "default"
+    assert state["sources"]["grade.threshold_pct"] == "cli"
+
+
+@pytest.mark.parametrize("changes", [
+    {"curvature.no_such_key": "1"},
+    {"sign.imgsz": "640"},              # baked into the cached detections
+    {"grade.threshold_pct": "-1"},      # fails the configuration's own range check
+    {"sign.conf": "0.05"},              # below sign.runner_conf
+])
+def test_a_change_the_report_cannot_take_is_refused_and_nothing_changes(config_server, changes):
+    base, rebuild = config_server
+    code, _, _ = _post_json(f"{base}/config", changes)
+    assert code == 400
+    assert rebuild.panel == {} and rebuild.runner.status()["state"] == "idle"
+
+
+def test_a_valid_change_starts_a_rebuild_and_reaches_uploads_too(config_server):
+    base, rebuild = config_server
+    code, status, _ = _post_json(f"{base}/config", {"curvature.threshold_m": "350"})
+    assert (code, status["kind"]) == (202, "config")
+    assert _settled(base)["state"] == "done"
+
+    state = _request(f"{base}/config")[1]
+    assert state["values"]["curvature.threshold_m"] == 350
+    assert state["sources"]["curvature.threshold_m"] == "viewer"
+    assert state["values"]["grade.threshold_pct"] == 8  # the startup --set still holds
+    assert rebuild.upload.cfg.curvature.threshold_m == 350

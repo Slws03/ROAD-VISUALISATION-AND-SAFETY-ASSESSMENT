@@ -25,7 +25,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from irap_screening.decision.report import SCORING_MODULES
-from irap_screening.view.jobs import Conflict, Upload, pipeline_steps, valid_route_id
+from irap_screening.view.jobs import Conflict, Rebuild, Upload, pipeline_steps, valid_route_id
 from irap_screening.view.review import save_review_entry
 
 Resolver = Callable[[str, Path], Path]
@@ -114,9 +114,10 @@ class _QuietHandler(SimpleHTTPRequestHandler):
     """Static handler without the per-request logging, which drowns the console.
 
     Two things here are not static. POST /review (or /<route_id>/review under
-    the multi-route page) records one human review verdict. And when the
-    server was given an Upload, POST /upload receives a route zip and GET /job
-    reports the job running over it.
+    the multi-route page) records one human review verdict. When the server
+    was given an Upload, POST /upload receives a route zip. When it was given a
+    Rebuild, GET /config lists the thresholds in force and POST /config re-runs
+    the report under changed ones. GET /job reports whichever job is running.
     """
 
     def __init__(
@@ -125,11 +126,13 @@ class _QuietHandler(SimpleHTTPRequestHandler):
         resolve: Resolver,
         write_target: WriteTarget,
         upload: Upload | None = None,
+        rebuild: Rebuild | None = None,
         **kwargs: object,
     ) -> None:
         self._resolve = resolve
         self._write_target = write_target
         self._upload = upload
+        self._rebuild = rebuild
         super().__init__(*args, **kwargs)
 
     def translate_path(self, path: str) -> str:
@@ -144,10 +147,32 @@ class _QuietHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler's own naming)
-        if self._upload is not None and _safe_segments(self.path) == ["job"]:
-            self._send_json(200, self._upload.runner.status())
+        words = _safe_segments(self.path)
+        owner = self._rebuild or self._upload
+        if owner is not None and words == ["job"]:
+            # The page shows its upload control only where uploads can run.
+            self._send_json(200, {**owner.runner.status(), "upload": self._upload is not None})
+            return
+        if self._rebuild is not None and words == ["config"]:
+            self._send_json(200, self._rebuild.state())
             return
         super().do_GET()
+
+    def _receive_config(self, rebuild: Rebuild) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            changes = json.loads(self.rfile.read(length))
+            if not isinstance(changes, dict):
+                raise ValueError("expected an object of setting: value")
+            rebuild.apply(changes)
+        except Conflict as error:
+            self._send_json(409, {"error": str(error)})
+            return
+        except ValueError as error:  # pydantic's ValidationError is one
+            # In the body, not the reason phrase: a validation message spans lines.
+            self._send_json(400, {"error": str(error)})
+            return
+        self._send_json(202, rebuild.runner.status())
 
     def _refuse(self, code: int, message: str, unread: int) -> None:
         # Read the body out before answering. Closing on an unread body resets
@@ -217,6 +242,9 @@ class _QuietHandler(SimpleHTTPRequestHandler):
         if self._upload is not None and _safe_segments(self.path) == ["upload"]:
             self._receive_upload(self._upload)
             return
+        if self._rebuild is not None and _safe_segments(self.path) == ["config"]:
+            self._receive_config(self._rebuild)
+            return
         route_dir = self._write_target(self.path)
         if route_dir is None:
             self.send_error(404)
@@ -262,6 +290,7 @@ def _make_server(
     write_target: WriteTarget,
     port: int,
     upload: Upload | None = None,
+    rebuild: Rebuild | None = None,
 ) -> ThreadingHTTPServer:
     handler = partial(
         _QuietHandler,
@@ -269,6 +298,7 @@ def _make_server(
         resolve=resolve,
         write_target=write_target,
         upload=upload,
+        rebuild=rebuild,
     )
     return ThreadingHTTPServer(("127.0.0.1", port), handler)
 
@@ -280,9 +310,10 @@ def _run(
     port: int,
     open_browser: bool,
     upload: Upload | None = None,
+    rebuild: Rebuild | None = None,
 ) -> None:
     """Serve `directory` until interrupted, resolving requests via `resolve`. Blocks."""
-    with _make_server(directory, resolve, write_target, port, upload) as server:
+    with _make_server(directory, resolve, write_target, port, upload, rebuild) as server:
         url = f"http://127.0.0.1:{server.server_address[1]}/"
         print(f"Serving {directory} at {url}")
         print("Press Ctrl+C to stop.")
@@ -315,14 +346,17 @@ def serve_routes(
     port: int = 8000,
     open_browser: bool = True,
     upload: Upload | None = None,
+    rebuild: Rebuild | None = None,
 ) -> None:
     """Serve a multi-route viewer directory until interrupted. Blocks."""
     directory = Path(directory).resolve()
     route_dirs = {route_id: Path(path).resolve() for route_id, path in route_dirs.items()}
+    # One table for all: a finished upload adds its route here, a rebuild
+    # re-runs every route in it, and the resolvers below read it per request.
     if upload is not None:
-        # One table for both: a finished job adds its route here, and the
-        # resolvers below read the same dict on every request.
         upload.route_dirs = route_dirs
+    if rebuild is not None:
+        rebuild.route_dirs = route_dirs
     _run(
         directory,
         lambda p, out: _resolve_multi_path(p, out, route_dirs),
@@ -330,4 +364,5 @@ def serve_routes(
         port,
         open_browser,
         upload,
+        rebuild,
     )

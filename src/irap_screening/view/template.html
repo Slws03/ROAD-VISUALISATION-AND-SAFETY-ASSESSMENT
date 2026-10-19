@@ -77,8 +77,8 @@
     background: var(--surface2); color: var(--text); border: 1px solid var(--line);
     border-radius: 4px; padding: 4px 8px; font: inherit;
   }
-  #upload { margin-top: 8px; }
-  #upload-status { margin-top: 4px; overflow-wrap: anywhere; }
+  #actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+  #job-status { margin-top: 4px; overflow-wrap: anywhere; }
   #coverage { padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 12px; }
   #coverage span { color: var(--muted); }
   #segment-filters {
@@ -174,18 +174,30 @@
        text-transform: uppercase; letter-spacing: .04em; margin: 22px 0 8px; }
   code { background: var(--surface2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
   .details-open { padding: 1px 8px; font-size: 12px; white-space: nowrap; }
-  #details {
+  #details, #config {
     width: min(1200px, 94vw); max-height: 92vh; padding: 0;
     border: 1px solid var(--line); border-radius: 10px;
     background: var(--panel); color: var(--text);
   }
-  #details::backdrop { background: rgb(0 0 0 / .55); }
-  #details > header {
+  #config { width: min(860px, 94vw); }
+  #details::backdrop, #config::backdrop { background: rgb(0 0 0 / .55); }
+  #details > header, #config > header {
     position: sticky; top: 0; z-index: 2; background: var(--panel);
     padding: 12px 16px; border-bottom: 1px solid var(--line); gap: 6px;
   }
-  #details h3 { margin: 0; font-size: 15px; margin-right: auto; }
-  #details .body { padding: 6px 16px 16px; }
+  #details h3, #config h3 { margin: 0; font-size: 15px; margin-right: auto; }
+  #details .body, #config .body { padding: 6px 16px 16px; }
+  #config-note { max-width: 780px; }
+  #config-error { color: var(--critical); white-space: pre-wrap; font-size: 12px; }
+  #config-table { font-size: 12px; font-variant-numeric: tabular-nums; }
+  #config-table td, #config-table th { padding: 4px 10px; }
+  #config-table th.section { color: var(--text); font-size: 13px; padding-top: 14px; }
+  #config-table input {
+    width: 160px; background: var(--surface2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; font: inherit;
+  }
+  #config-table input.changed { border-color: var(--watch); }
+  #config-table .viewer { color: var(--watch); }
   #details .chart-title { color: var(--muted); font-size: 12px; margin: 14px 0 0; }
   #details-summary p { margin: 6px 0; max-width: 900px; }
   #details-summary .calc { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -208,11 +220,14 @@
       <h1 id="route">Loading…</h1>
       <div class="sub" id="generated"></div>
       <select id="route-select" title="Switch route"></select>
-      <div id="upload" hidden>
-        <button id="upload-button">Upload route</button>
-        <input id="upload-file" type="file" accept=".zip" hidden>
-        <div class="sub" id="upload-status"></div>
+      <div id="actions">
+        <button id="config-open">Thresholds</button>
+        <span id="upload" hidden>
+          <button id="upload-button">Upload route</button>
+          <input id="upload-file" type="file" accept=".zip" hidden>
+        </span>
       </div>
+      <div class="sub" id="job-status"></div>
     </div>
     <button id="theme-toggle" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">
       <svg id="theme-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
@@ -257,6 +272,19 @@
     <div id="chart-b"></div>
     <div id="chart-c"></div>
     <details id="details-samples"></details>
+  </div>
+</dialog>
+
+<dialog id="config">
+  <header>
+    <h3>Thresholds</h3>
+    <button id="config-apply" hidden>Apply and re-run</button>
+    <button id="config-close" aria-label="Close">&times;</button>
+  </header>
+  <div class="body">
+    <p class="sub" id="config-note"></p>
+    <div id="config-error"></div>
+    <table id="config-table"></table>
   </div>
 </dialog>
 
@@ -1308,7 +1336,7 @@ detailsDialog.addEventListener("close", () => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (selected === null) return;
+  if (selected === null || configDialog.open) return;
   if (event.key === "ArrowLeft") step(-1);
   if (event.key === "ArrowRight") step(1);
 });
@@ -1382,30 +1410,41 @@ document.getElementById("route-select").addEventListener("change", (event) => {
   loadRoute(event.target.value);
 });
 
-// Upload exists only when the server can run the detectors. Any other server
-// answers /job with 404 and this control stays hidden.
+// Upload exists only when the server can run the detectors; the server says
+// so in /job. A server with no jobs at all answers /job with 404.
 const uploadButton = document.getElementById("upload-button");
 const uploadFile = document.getElementById("upload-file");
-const uploadStatus = document.getElementById("upload-status");
+const uploadStatus = document.getElementById("job-status");
 // Reload only for a job this page watched finish; otherwise a job that ended
 // earlier would reload the page every time it opened.
 let jobWatched = false;
 
 function showJob(job) {
-  document.getElementById("upload").hidden = false;
-  if (job.state === "running") {
+  document.getElementById("upload").hidden = !job.upload;
+  const name = job.kind === "config" ? "Thresholds" : job.route_id;
+  const running = job.state === "running";
+  uploadButton.disabled = running;
+  configApply.disabled = running;
+  if (running) {
     jobWatched = true;
-    uploadButton.disabled = true;
     const last = job.log.length ? ` - ${job.log[job.log.length - 1]}` : "";
-    uploadStatus.textContent =
-      `${job.route_id}: ${job.label} (${job.step}/${job.steps})${last}`;
+    uploadStatus.textContent = `${name}: ${job.label} (${job.step}/${job.steps})${last}`;
     setTimeout(pollJob, 1000);
     return;
   }
-  uploadButton.disabled = false;
   if (job.state === "failed") {
-    uploadStatus.textContent = `${job.route_id}: ${job.label} failed - ${job.error}`;
+    uploadStatus.textContent = `${name}: ${job.label} failed - ${job.error}`;
   } else if (job.state === "done" && jobWatched) {
+    jobWatched = false;
+    if (job.kind === "config") {
+      // Stay on the route and segment being looked at.
+      uploadStatus.textContent = "Thresholds applied; every route's report re-ran.";
+      const keep = selected;
+      loadRoute(currentRoute).then(() => {
+        if (keep !== null && keep < data.segments.length) select(keep);
+      });
+      return;
+    }
     localStorage.setItem(ROUTE_KEY, job.route_id);
     location.reload();
   }
@@ -1439,6 +1478,109 @@ uploadFile.addEventListener("change", () => {
     .catch((error) => {
       uploadButton.disabled = false;
       uploadStatus.textContent = `Upload refused: ${error.message}`;
+    });
+});
+
+// Thresholds: what every flag on this page was decided with. Under `irap view`
+// over a directory of routes the server lists them with their sources (GET
+// /config) and can re-run the report under changed ones (POST /config); on any
+// other server the table is read-only, from this route's data.json.
+const configDialog = document.getElementById("config");
+const configApply = document.getElementById("config-apply");
+const configError = document.getElementById("config-error");
+const CONFIG_NOTES = {
+  "lane.clrernet_conf": "Lowering it below the floor of the cached lane dump has no effect.",
+  "segment.length_m": "Also sets grade's sustained window, a tenth of this.",
+};
+
+function flattenConfig(tree, prefix = "") {
+  return Object.entries(tree).reduce((flat, [key, value]) => (
+    value && typeof value === "object" && !Array.isArray(value)
+      ? { ...flat, ...flattenConfig(value, `${prefix}${key}.`) }
+      : { ...flat, [`${prefix}${key}`]: value }
+  ), {});
+}
+
+function configText(value) {
+  return Array.isArray(value) ? JSON.stringify(value) : String(value);
+}
+
+function renderConfig(state) {
+  const editable = state !== null;
+  const values = editable ? state.values : flattenConfig(data.config);
+  const detector = new Set(editable ? state.detector_keys : []);
+  document.getElementById("config-note").textContent = editable
+    ? "Changes apply to every route on this page and re-run the report from the cached "
+      + "detections; the detectors themselves do not run again. They last until the server "
+      + "stops: restarting irap view returns to the values it was started with. Source: "
+      + "default (configs/default.yaml), profile (--config), cli (--set), viewer (changed here)."
+    : "Read-only: the values this route's report was built with. Serve a directory of "
+      + "routes with irap view to change them here.";
+  configApply.hidden = !editable;
+  configError.textContent = "";
+  let section = null;
+  const rows = [];
+  for (const [key, value] of Object.entries(values)) {
+    const [head, ...rest] = key.split(".");
+    if (head !== section) {
+      section = head;
+      rows.push(`<tr><th class="section" colspan="4">${head}</th></tr>`);
+    }
+    const text = attrEscape(configText(value));
+    const source = editable ? state.sources[key] : "";
+    const cell = editable && !detector.has(key)
+      ? `<input data-key="${key}" value="${text}">`
+      : text;
+    const note = detector.has(key)
+      ? "Read by the detector: re-run it to change this."
+      : (CONFIG_NOTES[key] ?? "");
+    rows.push(`<tr><td>${rest.join(".")}</td><td>${cell}</td>`
+      + `<td class="${source}">${source}</td><td class="metrics">${note}</td></tr>`);
+  }
+  document.getElementById("config-table").innerHTML = rows.join("");
+}
+
+document.getElementById("config-open").addEventListener("click", () => {
+  fetch("config")
+    .then((response) => (response.ok ? response.json() : null))
+    .catch(() => null)
+    .then((state) => {
+      renderConfig(state);
+      configDialog.showModal();
+    });
+});
+document.getElementById("config-close").addEventListener("click", () => configDialog.close());
+document.getElementById("config-table").addEventListener("input", (event) => {
+  event.target.classList.toggle("changed", event.target.value !== event.target.defaultValue);
+});
+configApply.addEventListener("click", () => {
+  const changes = {};
+  for (const input of configDialog.querySelectorAll("input.changed")) {
+    changes[input.dataset.key] = input.value.trim();
+  }
+  if (!Object.keys(changes).length) {
+    configError.textContent = "Nothing changed.";
+    return;
+  }
+  configApply.disabled = true;
+  fetch("config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+  })
+    .then((response) => response.json().then((body) => ({ ok: response.ok, body })))
+    .then(({ ok, body }) => {
+      if (!ok) {
+        configApply.disabled = false;
+        configError.textContent = body.error;
+        return;
+      }
+      configDialog.close();
+      showJob(body);
+    })
+    .catch((error) => {
+      configApply.disabled = false;
+      configError.textContent = `Could not apply: ${error.message}`;
     });
 });
 
