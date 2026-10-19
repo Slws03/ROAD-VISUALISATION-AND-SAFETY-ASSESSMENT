@@ -70,6 +70,21 @@ def irap_curvature_category(radius_m: float) -> int:
     return 4
 
 
+def radius_series(route: AlignedRoute, cfg: Settings, bias: float) -> np.ndarray:
+    """Turn radius in metres, one value per IMU sample.
+
+    NaN where speed is below v_min_mps: curvature is undefined there, not
+    large. Shared by the segment flag and the viewer's evidence chart, so the
+    chart plots exactly the values the flag was decided on.
+    """
+    gz = np.array([sample.gz for sample in route.imu], dtype=float) - bias
+    speed = route.imu_speed_mps
+    with np.errstate(divide="ignore", invalid="ignore"):
+        radii = np.where(np.abs(gz) > 1e-9, speed / np.abs(gz), _HUGE_RADIUS_M)
+    radii = np.clip(radii, 0.0, _HUGE_RADIUS_M)
+    return np.where(speed >= cfg.curvature.v_min_mps, radii, np.nan)
+
+
 def analyse_curvature(
     route: AlignedRoute, segments: list[Segment], cfg: Settings
 ) -> list[ModuleResult]:
@@ -77,6 +92,7 @@ def analyse_curvature(
     bias = estimate_gyro_bias(route, cfg)
     gz = np.array([sample.gz for sample in route.imu], dtype=float) - bias
     speed = route.imu_speed_mps
+    radii = radius_series(route, cfg, bias)
 
     results: list[ModuleResult] = []
     for segment in segments:
@@ -124,21 +140,10 @@ def analyse_curvature(
             )
             continue
 
-        usable_gz = window_gz[usable]
-        usable_speed = window_speed[usable]
-
-        # Radius per usable sample, then take the worst (smallest) as the segment
-        # value, matching the iRAP rule that the highest-risk value codes the
-        # segment.
-        with np.errstate(divide="ignore", invalid="ignore"):
-            radii = np.where(
-                np.abs(usable_gz) > 1e-9,
-                usable_speed / np.abs(usable_gz),
-                _HUGE_RADIUS_M,
-            )
-        radii = np.clip(radii, 0.0, _HUGE_RADIUS_M)
-        worst_index = int(np.argmin(radii))
-        radius_m = float(radii[worst_index])
+        # The worst (smallest) radius codes the segment, matching the iRAP rule
+        # that the highest-risk value codes the segment. Gated samples are NaN.
+        worst_index = int(np.nanargmin(radii[lo:hi]))
+        radius_m = float(radii[lo + worst_index])
 
         flag = Flag.CRITICAL if radius_m < cfg.curvature.threshold_m else Flag.NORMAL
         results.append(
@@ -148,7 +153,7 @@ def analyse_curvature(
                 flag=flag,
                 metrics={
                     "radius_m": radius_m,
-                    "yaw_rate_rad_s": float(abs(usable_gz[worst_index])),
+                    "yaw_rate_rad_s": float(abs(window_gz[worst_index])),
                     "mean_speed_mps": mean_speed,
                     "gyro_bias_rad_s": bias,
                     "irap_category": float(irap_curvature_category(radius_m)),

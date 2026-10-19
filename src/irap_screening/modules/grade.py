@@ -108,11 +108,26 @@ def _sustained_steepest_grade(
     span never reaches min_length_m (sparse data), matching the prior,
     unfiltered behaviour rather than reporting nothing.
     """
+    index, _, _, _ = sustained_grade_window(grade_pct, dist_m, min_length_m)
+    return float(grade_pct[index]), index
+
+
+def sustained_grade_window(
+    grade_pct: np.ndarray, dist_m: np.ndarray, min_length_m: float
+) -> tuple[int, int, int, bool]:
+    """The search behind _sustained_steepest_grade, with the window it chose.
+
+    Returns (index, left, right, fallback): the sample whose value is the
+    segment's grade, the first and last sample of the window it was held over,
+    and whether the segment was too short and the single steepest sample was
+    taken instead (then left == right == index). Exposed so the viewer shows
+    the exact window the flag was decided on.
+    """
     n = grade_pct.size
     abs_grade = np.abs(grade_pct)
 
     best_floor = -1.0
-    best_index = 0
+    best = (0, 0, 0)
     left = 0
     for right in range(n):
         while left < right and dist_m[right] - dist_m[left + 1] >= min_length_m:
@@ -124,13 +139,12 @@ def _sustained_steepest_grade(
         floor = float(window[window_index - left])
         if floor > best_floor:
             best_floor = floor
-            best_index = window_index
+            best = (window_index, left, right)
 
     if best_floor < 0:
-        best_index = int(np.argmax(abs_grade))
-        best_floor = float(abs_grade[best_index])
-
-    return float(grade_pct[best_index]), best_index
+        index = int(np.argmax(abs_grade))
+        return index, index, index, True
+    return best[0], best[1], best[2], False
 
 
 def irap_grade_category(grade_pct: float) -> int:

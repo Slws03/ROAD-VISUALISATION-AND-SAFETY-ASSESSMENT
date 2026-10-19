@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>iRAP screening viewer</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/uplot@1.6.31/dist/uPlot.min.css">
 <style>
   :root {
     --bg: #14161a;
@@ -172,6 +173,31 @@
   h2 { font-size: 13px; color: var(--muted); font-weight: 500;
        text-transform: uppercase; letter-spacing: .04em; margin: 22px 0 8px; }
   code { background: var(--surface2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  .details-open { padding: 1px 8px; font-size: 12px; white-space: nowrap; }
+  #details {
+    width: min(1200px, 94vw); max-height: 92vh; padding: 0;
+    border: 1px solid var(--line); border-radius: 10px;
+    background: var(--panel); color: var(--text);
+  }
+  #details::backdrop { background: rgb(0 0 0 / .55); }
+  #details > header {
+    position: sticky; top: 0; z-index: 2; background: var(--panel);
+    padding: 12px 16px; border-bottom: 1px solid var(--line); gap: 6px;
+  }
+  #details h3 { margin: 0; font-size: 15px; margin-right: auto; }
+  #details .body { padding: 6px 16px 16px; }
+  #details .chart-title { color: var(--muted); font-size: 12px; margin: 14px 0 0; }
+  #details-summary p { margin: 6px 0; max-width: 900px; }
+  #details-summary .calc { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  #details-summary .critical { color: var(--critical); }
+  #details-summary .normal { color: var(--normal); }
+  #details-samples { margin-top: 14px; }
+  #details-samples summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  #details-samples table { font-size: 12px; font-variant-numeric: tabular-nums; max-width: none; margin-top: 6px; }
+  #details-samples td, #details-samples th { padding: 3px 10px; }
+  #details-samples tr.gated td { color: var(--unassessed); }
+  #details-samples tr.deciding td { color: var(--critical); font-weight: 600; }
+  #details-samples tr.window td { background: var(--active-bg); }
 </style>
 </head>
 <body>
@@ -215,8 +241,27 @@
 </aside>
 <main><div class="empty" id="main-empty">Select a segment.</div></main>
 </div>
+<dialog id="details">
+  <header>
+    <h3 id="details-title"></h3>
+    <button id="details-prev" title="Previous segment">&larr;</button>
+    <button id="details-next" title="Next segment">&rarr;</button>
+    <button id="details-close" aria-label="Close">&times;</button>
+  </header>
+  <div class="body">
+    <div id="details-summary"></div>
+    <p class="chart-title" id="details-overview-caption"></p>
+    <div id="details-overview"></div>
+    <p class="chart-title">This segment, with 30 m either side. Red line: the sample that set the flag.</p>
+    <div id="chart-a"></div>
+    <div id="chart-b"></div>
+    <div id="chart-c"></div>
+    <details id="details-samples"></details>
+  </div>
+</dialog>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <script>
 const MODULES = ["curvature", "grade", "delineation", "condition"];
 const FLAG_COLOR = {
@@ -531,7 +576,8 @@ function moduleRows(segment) {
          + `<td class="flag ${entry.flag}">${flagText(entry.flag)}</td>`
          + `<td class="metrics">${irapCategoryLabel(module, entry)}</td>`
          + `<td class="metrics">${detail}</td>`
-         + `<td class="review-cell">${reviewCell(segment, module, entry)}</td></tr>`;
+         + `<td class="review-cell">${reviewCell(segment, module, entry)}</td>`
+         + `<td>${detailsButton(module)}</td></tr>`;
   }).join("") + qualityOfCurveRow(segment);
 }
 
@@ -544,7 +590,7 @@ function qualityOfCurveRow(segment) {
   if (!quality) return "";
   return `<tr><td>quality of curve</td><td>-</td>`
        + `<td class="metrics">${QUALITY_OF_CURVE_LABELS[quality.code] ?? "not assessed"}</td>`
-       + `<td class="metrics">${quality.basis}</td><td></td></tr>`;
+       + `<td class="metrics">${quality.basis}</td><td></td><td></td></tr>`;
 }
 
 // Delegated on document: renderDetail() replaces the whole panel on every
@@ -784,7 +830,7 @@ function renderDetail() {
          </figure>`
       : `<p class="metrics">No frames fall within this segment.</p>`}
     <h2>${segment.segment_id} · ${Math.round(segment.start_m)}-${Math.round(segment.end_m)} m</h2>
-    <table><tr><th>module</th><th>flag</th><th>iRAP category</th><th>metrics</th><th>review</th></tr>
+    <table><tr><th>module</th><th>flag</th><th>iRAP category</th><th>metrics</th><th>review</th><th>evidence</th></tr>
       ${moduleRows(segment)}</table>
     <h2>Signs and markings</h2>
     ${signsBlock(segment)}
@@ -808,8 +854,13 @@ function renderDetail() {
 function select(index) {
   selected = index;
   frameIndex = 0;
-  document.querySelectorAll(".seg").forEach((node) =>
-    node.classList.toggle("active", Number(node.dataset.i) === index));
+  document.querySelectorAll(".seg").forEach((node) => {
+    const active = Number(node.dataset.i) === index;
+    node.classList.toggle("active", active);
+    // The details overview can select a segment far down the list.
+    if (active) node.scrollIntoView({ block: "nearest" });
+  });
+  if (detailsDialog.open && detailCharts.length) renderDetails();
   if (map && layers[index]) map.fitBounds(layers[index].getBounds().pad(1.5));
   renderDetail();
 }
@@ -853,6 +904,408 @@ function setupResizeHandles() {
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
 }
+
+// Curvature and grade details: the chain from IMU samples to the segment's
+// flag, built from the per-sample series export.py writes (build_profile) with
+// the same functions the modules use. A modal, so the page behind is inert
+// while it is open: the theme and the route cannot change under it.
+const detailsDialog = document.getElementById("details");
+const CONTEXT_M = 30;  // shown either side of the segment, to see the approach and exit
+let detailCharts = [];
+let overviewChart = null;
+let detailsModule = "curvature";
+
+function detailsButton(module) {
+  // A data.json exported before a module's series existed gets no button.
+  const ready = { curvature: data.profile?.radius_m, grade: data.profile?.pitch_deg };
+  if (!ready[module]) return "";
+  return `<button class="details-open" data-module="${module}">Details</button>`;
+}
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function segmentAt(dist) {
+  return data.segments.findIndex((s) => dist >= s.start_m && dist < s.end_m);
+}
+
+// Curvature in 1/km. Plotted instead of radius: a straight road's radius runs
+// to infinity and off any axis, while its curvature is simply near zero.
+function kappa(radius) {
+  return radius == null ? null : 1000 / radius;
+}
+
+// Tick positions on the iRAP radius bands. The threshold is always labelled;
+// the others only where they would not overlap a label already placed.
+function radiusSplits(kMax, threshold) {
+  const kept = [0, threshold];
+  for (const k of [1.25, 2.5, 5, 10, 20, 50]) {
+    if (k <= kMax && kept.every((other) => Math.abs(other - k) >= kMax / 8)) kept.push(k);
+  }
+  return kept.sort((a, b) => a - b);
+}
+
+function radiusLabel(k) {
+  return k === 0 ? "straight" : `R ${Math.round(1000 / k)} m`;
+}
+
+// The sample that set the flag: the smallest radius within the segment, as
+// analyse_curvature takes it (first occurrence on a tie, as numpy's argmin).
+function decidingSample() {
+  const segment = data.segments[selected];
+  const { dist_m: dist, radius_m: radius } = data.profile;
+  let best = -1;
+  for (let i = 0; i < dist.length; i++) {
+    if (dist[i] < segment.start_m || dist[i] >= segment.end_m || radius[i] == null) continue;
+    if (best < 0 || radius[i] < radius[best]) best = i;
+  }
+  return best;
+}
+
+function summaryHtml(entry, i) {
+  const t = data.config.curvature;
+  if (entry.flag === "not_assessed" || i < 0) {
+    return `<p><b>Not assessed.</b> ${entry.notes ?? ""}</p>`;
+  }
+  const p = data.profile;
+  const bias = entry.gyro_bias_rad_s ?? 0;
+  const yaw = Math.abs(p.yaw_rate_rad_s[i] - bias);
+  const verdict = entry.flag === "critical"
+    ? `<b class="critical">Critical:</b> the tightest radius, ${Math.round(entry.radius_m)} m, is below the ${t.threshold_m} m threshold.`
+    : `<b class="normal">Normal:</b> the tightest radius, ${Math.round(entry.radius_m)} m, is at or above the ${t.threshold_m} m threshold.`;
+  return `<p>${verdict}</p>`
+    + `<p class="calc">At ${Math.round(p.dist_m[i])} m (t = ${p.time_s[i].toFixed(1)} s): `
+    + `radius = speed ÷ |yaw rate| = ${p.speed_mps[i].toFixed(2)} m/s ÷ ${yaw.toFixed(4)} rad/s `
+    + `= ${Math.round(entry.radius_m)} m.<br>`
+    // estimate_gyro_bias returns exactly 0 when the route has no stationary window.
+    + (bias === 0
+      ? `Yaw rate is the raw gyro z reading, uncorrected: the route has no stationary `
+        + `window to estimate the gyro bias from. `
+      : `Yaw rate is the raw gyro z reading ${p.yaw_rate_rad_s[i].toFixed(4)} rad/s minus the gyro bias `
+        + `${bias.toFixed(4)} rad/s, estimated once for the route from stationary samples. `)
+    + `Samples below ${t.v_min_mps} m/s (${Math.round(t.v_min_mps * 3.6)} km/h) are left out: `
+    + `radius is undefined as speed approaches zero.</p>`;
+}
+
+// Draws behind the series: the segment shaded, its boundaries, and any
+// horizontal reference lines; on top, a vertical line at the deciding sample.
+function shadeHooks(lines, deciding, band = null) {
+  const dpr = uPlot.pxRatio;
+  return {
+    drawAxes: [(u) => {
+      const { left, top, width, height } = u.bbox;
+      const segment = data.segments[selected];
+      const ctx = u.ctx;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(left, top, width, height); ctx.clip();
+      const x0 = u.valToPos(segment.start_m, "x", true);
+      const x1 = u.valToPos(segment.end_m, "x", true);
+      ctx.fillStyle = cssVar("--active-bg");
+      ctx.fillRect(x0, top, x1 - x0, height);
+      if (band) {
+        const b0 = u.valToPos(band[0], "x", true), b1 = u.valToPos(band[1], "x", true);
+        ctx.globalAlpha = 0.18;
+        ctx.fillStyle = cssVar("--critical");
+        ctx.fillRect(b0, top, Math.max(b1 - b0, dpr), height);
+        ctx.globalAlpha = 1;
+      }
+      ctx.lineWidth = dpr;
+      ctx.setLineDash([5 * dpr, 4 * dpr]);
+      for (const line of lines) {
+        const y = u.valToPos(line.value, "y", true);
+        ctx.strokeStyle = line.color;
+        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + width, y); ctx.stroke();
+      }
+      ctx.restore();
+    }],
+    draw: [(u) => {
+      if (deciding == null) return;
+      const { top, height } = u.bbox;
+      const x = u.valToPos(deciding, "x", true);
+      const ctx = u.ctx;
+      ctx.save();
+      ctx.strokeStyle = cssVar("--critical");
+      ctx.lineWidth = dpr;
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + height); ctx.stroke();
+      ctx.restore();
+    }],
+  };
+}
+
+function baseAxis(extra) {
+  const grid = cssVar("--line");
+  return {
+    stroke: cssVar("--muted"), grid: { stroke: grid, width: 1 },
+    ticks: { stroke: grid, width: 1 }, size: 70, ...extra,
+  };
+}
+
+// One detail chart: a window of the route, its own y range fitted to it.
+function detailChart(el, series, axis, lines, deciding, cols, range = null, band = null) {
+  const xAxis = baseAxis({ size: 40, values: (u, ticks) => ticks.map((v) => `${v} m`) });
+  return new uPlot({
+    width: el.clientWidth, height: 150,
+    cursor: { sync: { key: "details" }, drag: { x: false, y: false } },
+    legend: { show: true },
+    scales: { x: { time: false }, ...(range ? { y: { range } } : {}) },
+    axes: [xAxis, baseAxis(axis)],
+    // uPlot draws sample dots only when the samples are sparse, i.e. when the
+    // car is fast; that read as a normal/critical difference, so never draw them.
+    series: [{ label: "Distance", value: (u, v) => (v == null ? "-" : `${v.toFixed(1)} m`) },
+             ...series.map((s) => ({ ...s, points: { show: false } }))],
+    hooks: shadeHooks(lines, deciding, band),
+  }, cols, el);
+}
+
+// The overview's shading plus a strip along the top, one block per segment in
+// the open module's flag colour, so the route's critical stretches read at a glance.
+function overviewHooks() {
+  const hooks = shadeHooks([], null);
+  hooks.drawAxes.push((u) => {
+    const { top } = u.bbox;
+    const dpr = uPlot.pxRatio;
+    const colour = { critical: "--critical", normal: "--normal" };
+    const ctx = u.ctx;
+    ctx.save();
+    for (const segment of data.segments) {
+      const x0 = u.valToPos(segment.start_m, "x", true);
+      const x1 = u.valToPos(segment.end_m, "x", true);
+      ctx.fillStyle = cssVar(colour[segment[detailsModule]?.flag] || "--unassessed");
+      ctx.fillRect(x0, top, Math.max(x1 - x0 - dpr, dpr), 6 * dpr);
+    }
+    ctx.restore();
+  });
+  return hooks;
+}
+
+function renderOverview() {
+  const el = document.getElementById("details-overview");
+  overviewChart?.destroy();
+  const p = data.profile;
+  overviewChart = new uPlot({
+    width: el.clientWidth, height: 80,
+    cursor: { drag: { x: false, y: false }, points: { show: false } },
+    legend: { show: false },
+    // Headroom above the highest peak keeps the line clear of the flag strip.
+    scales: { x: { time: false }, y: { range: (u, min, max) => {
+      const floor = Math.min(0, min);
+      return [floor, max + (max - floor) * 0.35];
+    } } },
+    axes: [baseAxis({ size: 24, values: (u, ticks) => ticks.map((v) => `${v} m`) }),
+           baseAxis({ show: false, size: 70 })],
+    series: [{}, { stroke: cssVar("--muted"), width: 1, points: { show: false } }],
+    hooks: overviewHooks(),
+  }, [p.dist_m, detailsModule === "grade" ? p.grade_pct : p.radius_m.map(kappa)], el);
+  // The overview is the route-level navigation: a click opens that segment.
+  overviewChart.over.addEventListener("click", () => {
+    const i = segmentAt(overviewChart.posToVal(overviewChart.cursor.left, "x"));
+    if (i >= 0) select(i);
+  });
+}
+
+function renderDetails() {
+  const segment = data.segments[selected];
+  const name = detailsModule === "grade" ? "Grade" : "Curvature";
+  document.getElementById("details-title").textContent =
+    `${name} details · ${segment.segment_id} (${Math.round(segment.start_m)}-${Math.round(segment.end_m)} m)`;
+  document.getElementById("details-prev").disabled = selected === 0;
+  document.getElementById("details-next").disabled = selected === data.segments.length - 1;
+  overviewChart.redraw(false);
+
+  // The window: the segment plus context either side.
+  const p = data.profile;
+  const lo = segment.start_m - CONTEXT_M, hi = segment.end_m + CONTEXT_M;
+  const idx = [];
+  p.dist_m.forEach((d, k) => { if (d >= lo && d <= hi) idx.push(k); });
+  const pick = (values, f = (v) => v) => idx.map((k) => (values[k] == null ? null : f(values[k])));
+  detailCharts.forEach((chart) => chart.destroy());
+  (detailsModule === "grade" ? renderGradeDetails : renderCurvatureDetails)(segment, pick, pick(p.dist_m));
+}
+
+function renderCurvatureDetails(segment, pick, dist) {
+  const entry = segment.curvature || {};
+  const p = data.profile;
+  const t = data.config.curvature;
+  const i = decidingSample();
+  const bias = entry.gyro_bias_rad_s ?? 0;
+  document.getElementById("details-summary").innerHTML = summaryHtml(entry, i);
+
+  const deg = (v) => v * 180 / Math.PI;
+  const deciding = i >= 0 ? p.dist_m[i] : null;
+  const faint = cssVar("--border2"), critical = cssVar("--critical"), text = cssVar("--text");
+
+  const kMax = Math.max(5.5, ...pick(p.radius_m, kappa).filter((v) => v != null)) * 1.1;
+  detailCharts = [
+    detailChart(document.getElementById("chart-a"), [
+      { label: "Yaw rate, raw", stroke: faint, width: 1, value: (u, v) => (v == null ? "-" : `${v.toFixed(2)}°/s`) },
+      { label: "Yaw rate, bias removed", stroke: text, width: 1.5, value: (u, v) => (v == null ? "-" : `${v.toFixed(2)}°/s`) },
+    ], { values: (u, ticks) => ticks.map((v) => `${v}°/s`) }, [{ value: 0, color: faint }], deciding,
+    [dist, pick(p.yaw_rate_rad_s, deg), pick(p.yaw_rate_rad_s, (v) => deg(v - bias))]),
+
+    detailChart(document.getElementById("chart-b"), [
+      { label: "Speed", stroke: text, width: 1.5, value: (u, v) => (v == null ? "-" : `${v.toFixed(1)} km/h`) },
+    ], { values: (u, ticks) => ticks.map((v) => `${v} km/h`) },
+    [{ value: t.v_min_mps * 3.6, color: critical }], deciding,
+    [dist, pick(p.speed_mps, (v) => v * 3.6)]),
+
+    detailChart(document.getElementById("chart-c"), [
+      { label: "Curvature", stroke: text, width: 1.5,
+        value: (u, v, s, k) => (k == null ? "-" : v == null ? "below min speed"
+          : `${v.toFixed(2)} /km (R ${Math.round(1000 / v)} m)`) },
+    ], {
+      // Ticks sit on the iRAP radius bands, labelled as radius.
+      splits: () => radiusSplits(kMax, 1000 / t.threshold_m),
+      values: (u, ticks) => ticks.map(radiusLabel),
+    }, [
+      { value: 1000 / 800, color: faint },
+      { value: 1000 / t.threshold_m, color: critical },
+      { value: 1000 / 200, color: faint },
+    ], deciding,
+    [dist, pick(p.radius_m, kappa)], () => [0, kMax]),
+  ];
+
+  // Samples within the segment itself, the ones the flag was taken over.
+  const rows = [];
+  for (let k = 0; k < p.dist_m.length; k++) {
+    if (p.dist_m[k] < segment.start_m || p.dist_m[k] >= segment.end_m) continue;
+    const used = p.radius_m[k] != null;
+    rows.push(`<tr class="${k === i ? "deciding" : ""}${used ? "" : " gated"}">`
+      + `<td>${p.dist_m[k].toFixed(1)}</td><td>${p.time_s[k].toFixed(2)}</td>`
+      + `<td>${deg(p.yaw_rate_rad_s[k]).toFixed(2)}</td><td>${deg(p.yaw_rate_rad_s[k] - bias).toFixed(2)}</td>`
+      + `<td>${(p.speed_mps[k] * 3.6).toFixed(1)}</td>`
+      + `<td>${used ? (p.radius_m[k] >= 1e5 ? "straight" : Math.round(p.radius_m[k])) : "-"}</td>`
+      + `<td>${used ? "yes" : "no, below min speed"}</td></tr>`);
+  }
+  document.getElementById("details-samples").innerHTML =
+    `<summary>Samples in this segment (${rows.length})</summary>`
+    + `<table><tr><th>Distance (m)</th><th>Time (s)</th><th>Yaw raw (°/s)</th>`
+    + `<th>Yaw, bias removed (°/s)</th><th>Speed (km/h)</th><th>Radius (m)</th><th>Used</th></tr>`
+    + rows.join("") + `</table>`;
+}
+
+// Grade details: pitch from the accelerometer (with the vehicle's own
+// acceleration removed) fused with the gyro, then the steepest grade held for
+// a tenth of the segment. The window and the deciding sample come from
+// export.py (grade_windows), which runs analyse_grade's own search.
+function gradeSummaryHtml(segment, entry) {
+  const t = data.config.grade, w = segment.grade_window;
+  if (entry.flag === "not_assessed" || !w) {
+    return `<p><b>Not assessed.</b> ${entry.notes ?? ""}</p>`;
+  }
+  const p = data.profile, i = w.index, g = entry.grade_pct;
+  const minLength = data.config.segment.length_m / 10;
+  const alpha = t.comp_filter_alpha;
+  const verdict = entry.flag === "critical"
+    ? `<b class="critical">Critical:</b> the steepest grade held for ${minLength} m, ${g.toFixed(1)}%, is at or beyond the ±${t.threshold_pct}% threshold.`
+    : `<b class="normal">Normal:</b> the steepest grade held for ${minLength} m, ${g.toFixed(1)}%, is within the ±${t.threshold_pct}% threshold.`;
+  return `<p>${verdict}</p>`
+    + `<p class="calc">At ${Math.round(p.dist_m[i])} m (t = ${p.time_s[i].toFixed(1)} s): `
+    + `grade = tan(pitch) × 100 = tan(${p.pitch_deg[i].toFixed(2)}°) × 100 = ${g.toFixed(2)}%.<br>`
+    + (w.fallback
+      ? `The segment's samples span less than ${minLength} m, so its single steepest sample is taken.<br>`
+      : `From ${w.start_m} m to ${w.end_m} m (tinted) the grade stays at ${Math.abs(g).toFixed(2)}% or steeper: `
+        + `the steepest gradient at least ${minLength} m long, as the iRAP Coding Manual records it, `
+        + `so a shorter spike (a speed bump, a culvert) does not set the grade.<br>`)
+    + `Pitch is a complementary filter: ${alpha} × (previous pitch + gyro pitch rate × dt) `
+    + `+ ${(1 - alpha).toFixed(2)} × the accelerometer's pitch. The accelerometer reads the vehicle's own `
+    + `acceleration in the same channel as the slope, so it is removed first, taken from the change in `
+    + `recorded speed: here ${p.long_accel_mps2[i].toFixed(2)} m/s², without which this sample's `
+    + `accelerometer pitch would read ${p.pitch_accel_raw_deg[i].toFixed(2)}° instead of `
+    + `${p.pitch_accel_deg[i].toFixed(2)}°.</p>`;
+}
+
+function renderGradeDetails(segment, pick, dist) {
+  const entry = segment.grade || {};
+  const w = segment.grade_window;
+  const p = data.profile;
+  const t = data.config.grade;
+  const assessed = entry.flag !== "not_assessed" && w;
+  document.getElementById("details-summary").innerHTML = gradeSummaryHtml(segment, entry);
+
+  const deciding = assessed ? p.dist_m[w.index] : null;
+  const band = assessed && !w.fallback ? [w.start_m, w.end_m] : null;
+  const faint = cssVar("--border2"), muted = cssVar("--muted"), critical = cssVar("--critical"), text = cssVar("--text");
+  const fmt = (unit, digits) => (u, v) => (v == null ? "-" : `${v.toFixed(digits)}${unit}`);
+  detailCharts = [
+    detailChart(document.getElementById("chart-a"), [
+      { label: "Accelerometer pitch, uncorrected", stroke: faint, width: 1, value: fmt("°", 2) },
+      { label: "Accelerometer pitch, acceleration removed", stroke: muted, width: 1, value: fmt("°", 2) },
+      { label: "Fused pitch", stroke: text, width: 1.5, value: fmt("°", 2) },
+    ], { values: (u, ticks) => ticks.map((v) => `${v}°`) }, [{ value: 0, color: faint }], deciding,
+    [dist, pick(p.pitch_accel_raw_deg), pick(p.pitch_accel_deg), pick(p.pitch_deg)]),
+
+    detailChart(document.getElementById("chart-b"), [
+      { label: "Longitudinal acceleration, from speed", stroke: text, width: 1.5, value: fmt(" m/s²", 2) },
+    ], { values: (u, ticks) => ticks.map((v) => `${v} m/s²`) }, [{ value: 0, color: faint }], deciding,
+    [dist, pick(p.long_accel_mps2)]),
+
+    detailChart(document.getElementById("chart-c"), [
+      { label: "Grade", stroke: text, width: 1.5, value: fmt("%", 2) },
+    ], {
+      // Labelled at the thresholds: uPlot's own ticks skip them on a short chart.
+      splits: () => [-t.threshold_pct, 0, t.threshold_pct],
+      values: (u, ticks) => ticks.map((v) => `${v}%`),
+    }, [
+      { value: t.threshold_pct, color: critical },
+      { value: 0, color: faint },
+      { value: -t.threshold_pct, color: critical },
+    ], deciding,
+    [dist, pick(p.grade_pct)],
+    // Keep both thresholds in view, so a flat road reads as flat.
+    (u, min, max) => [Math.min(min, -t.threshold_pct * 1.15), Math.max(max, t.threshold_pct * 1.15)],
+    band),
+  ];
+
+  const rows = [];
+  for (let k = 0; k < p.dist_m.length; k++) {
+    if (p.dist_m[k] < segment.start_m || p.dist_m[k] >= segment.end_m) continue;
+    const inWindow = band && p.dist_m[k] >= w.start_m && p.dist_m[k] <= w.end_m;
+    rows.push(`<tr class="${assessed && k === w.index ? "deciding" : ""}${inWindow ? " window" : ""}">`
+      + `<td>${p.dist_m[k].toFixed(1)}</td><td>${p.time_s[k].toFixed(2)}</td>`
+      + `<td>${p.accel_x_mps2[k].toFixed(3)}</td><td>${p.long_accel_mps2[k].toFixed(3)}</td>`
+      + `<td>${p.pitch_accel_raw_deg[k].toFixed(2)}</td><td>${p.pitch_accel_deg[k].toFixed(2)}</td>`
+      + `<td>${p.pitch_rate_deg_s[k].toFixed(3)}</td><td>${p.pitch_deg[k].toFixed(2)}</td>`
+      + `<td>${p.grade_pct[k].toFixed(2)}</td><td>${inWindow ? "yes" : ""}</td></tr>`);
+  }
+  document.getElementById("details-samples").innerHTML =
+    `<summary>Samples in this segment (${rows.length})</summary>`
+    + `<table><tr><th>Distance (m)</th><th>Time (s)</th><th>Accel x (m/s²)</th>`
+    + `<th>Longitudinal accel (m/s²)</th><th>Accel pitch, uncorrected (°)</th>`
+    + `<th>Accel pitch, corrected (°)</th><th>Gyro pitch rate (°/s)</th><th>Fused pitch (°)</th>`
+    + `<th>Grade (%)</th><th>In ${data.config.segment.length_m / 10} m window</th></tr>`
+    + rows.join("") + `</table>`;
+}
+
+function openDetails(module) {
+  detailsModule = module;
+  document.getElementById("details-overview-caption").textContent =
+    `Whole route: ${module}. Top strip: each segment's ${module} flag (green normal, red critical, `
+    + "grey not assessed). Shaded: this segment. Click to open another segment.";
+  detailsDialog.showModal();
+  if (typeof uPlot === "undefined") {
+    // uPlot comes from a CDN, like Leaflet; offline, the summary still shows.
+    document.getElementById("details-overview").textContent =
+      "Charts unavailable: the chart library could not be loaded (offline?).";
+    return;
+  }
+  renderOverview();
+  renderDetails();
+}
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest(".details-open");
+  if (button) openDetails(button.dataset.module);
+});
+document.getElementById("details-close").addEventListener("click", () => detailsDialog.close());
+document.getElementById("details-prev").addEventListener("click", () => select(selected - 1));
+document.getElementById("details-next").addEventListener("click", () => select(selected + 1));
+detailsDialog.addEventListener("close", () => {
+  detailCharts.forEach((chart) => chart.destroy());
+  detailCharts = [];
+  overviewChart?.destroy();
+  overviewChart = null;
+});
 
 document.addEventListener("keydown", (event) => {
   if (selected === null) return;

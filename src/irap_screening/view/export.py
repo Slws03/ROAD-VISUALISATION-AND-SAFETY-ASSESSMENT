@@ -16,14 +16,88 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from irap_screening.config import Settings
-from irap_screening.io.align import align_route
+from irap_screening.io.align import AlignedRoute, align_route
+from irap_screening.io.schema import Segment
 from irap_screening.io.sources.fixture import FixtureSource
+from irap_screening.modules.curvature import estimate_gyro_bias, radius_series
+from irap_screening.modules.grade import (
+    _accel_pitch,
+    longitudinal_accel,
+    pitch_series,
+    sustained_grade_window,
+)
 from irap_screening.pipeline import run_pipeline
 from irap_screening.segment import build_segments
 from irap_screening.view.review import load_review
 
 TEMPLATE = Path(__file__).parent / "template.html"
+
+
+def _rounded(values: np.ndarray, digits: int) -> list[float | None]:
+    # JSON has no NaN; a gated sample becomes null, which the chart draws as a gap.
+    return [None if np.isnan(v) else round(float(v), digits) for v in values]
+
+
+def build_profile(route: AlignedRoute, cfg: Settings) -> dict[str, list[float | None]]:
+    """Per-IMU-sample series behind the curvature and grade flags.
+
+    Computed by the same functions the modules use, so the evidence chart
+    shows the values the flags were decided on, not a re-derivation.
+    """
+    # ponytail: every sample is exported (~1.2k on KITTI); downsample if a
+    # long 100 Hz phone route makes data.json too heavy, keeping each min/max.
+    radius = radius_series(route, cfg, estimate_gyro_bias(route, cfg))
+    pitch = pitch_series(route, cfg)
+    grade = np.tan(pitch) * 100.0
+    times = np.array([s.timestamp_utc.timestamp() for s in route.imu], dtype=float)
+    yaw_rate = np.array([s.gz for s in route.imu], dtype=float)  # raw, before bias removal
+    ax, ay, az = np.array([[s.ax, s.ay, s.az] for s in route.imu], dtype=float).reshape(-1, 3).T
+    a_long = longitudinal_accel(route)
+    return {
+        "dist_m": _rounded(route.imu_dist_m, 1),
+        "time_s": _rounded(times - times[0], 2) if times.size else [],
+        "yaw_rate_rad_s": _rounded(yaw_rate, 5),
+        "speed_mps": _rounded(route.imu_speed_mps, 2),
+        "radius_m": _rounded(radius, 1),
+        "grade_pct": _rounded(grade, 2),
+        # Grade's chain: the accelerometer's gravity direction before and after
+        # removing the vehicle's own acceleration, then fused with the gyro.
+        "accel_x_mps2": _rounded(ax, 3),
+        "long_accel_mps2": _rounded(a_long, 3),
+        "pitch_accel_raw_deg": _rounded(np.degrees(_accel_pitch(ax, ay, az)), 3),
+        "pitch_accel_deg": _rounded(np.degrees(_accel_pitch(ax - a_long, ay, az)), 3),
+        "pitch_rate_deg_s": _rounded(np.degrees([s.gy for s in route.imu]), 3),
+        "pitch_deg": _rounded(np.degrees(pitch), 3),
+    }
+
+
+def grade_windows(
+    route: AlignedRoute, segments: list[Segment], cfg: Settings
+) -> dict[str, dict[str, Any]]:
+    """Per segment, the window its grade was held over, as analyse_grade chose it.
+
+    Indices are into the route's IMU samples (the profile), not the segment.
+    """
+    grade = np.tan(pitch_series(route, cfg)) * 100.0
+    min_length_m = cfg.segment.length_m / 10.0  # as analyse_grade
+    windows = {}
+    for segment in segments:
+        lo, hi = segment.imu_start, segment.imu_end
+        if hi <= lo:
+            continue
+        index, left, right, fallback = sustained_grade_window(
+            grade[lo:hi], route.imu_dist_m[lo:hi], min_length_m
+        )
+        windows[segment.segment_id] = {
+            "index": lo + index,
+            "start_m": round(float(route.imu_dist_m[lo + left]), 1),
+            "end_m": round(float(route.imu_dist_m[lo + right]), 1),
+            "fallback": fallback,
+        }
+    return windows
 
 
 def export_view(
@@ -49,6 +123,7 @@ def export_view(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     review_by_segment = load_review(route_dir)
+    windows = grade_windows(route, segments, cfg)
 
     data: dict[str, Any] = dict(report)
     data["segments"] = [
@@ -56,9 +131,11 @@ def export_view(
             **segment,
             "frame_ids": frame_ids_by_segment.get(segment["segment_id"], []),
             "review": review_by_segment.get(segment["segment_id"], {}),
+            "grade_window": windows.get(segment["segment_id"]),
         }
         for segment in report["segments"]
     ]
+    data["profile"] = build_profile(route, cfg)
     data["frames"] = {
         frame_id: frames_by_id[frame_id].path
         for frame_id in referenced_ids

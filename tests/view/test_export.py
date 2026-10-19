@@ -195,3 +195,36 @@ def test_the_page_carries_the_upload_control_hidden_by_default():
     assert 'id="upload" hidden' in page
     assert 'fetch("job")' in page
     assert "upload?name=" in page
+
+
+def test_profile_holds_the_samples_the_flags_were_decided_on(tmp_path):
+    """The evidence chart must plot the flag's own numbers, not a re-derivation."""
+    out = _export(tmp_path)
+    text = (out / "data.json").read_text(encoding="utf-8")
+    assert "NaN" not in text  # JSON.parse rejects it; gated samples must be null
+    profile = json.loads(text)["profile"]
+
+    lengths = {len(series) for series in profile.values()}
+    assert len(lengths) == 1 and lengths.pop() > 0
+    radii = set(profile["radius_m"])
+    grades = set(profile["grade_pct"])
+    for segment in json.loads(text)["segments"]:
+        curvature, grade = segment["curvature"], segment["grade"]
+        if "radius_m" in curvature:
+            assert round(curvature["radius_m"], 1) in radii
+        if "grade_pct" in grade:
+            assert round(grade["grade_pct"], 2) in grades
+
+
+def test_grade_window_points_at_the_sample_the_grade_flag_used(tmp_path):
+    """The viewer shades this window and marks this sample, so it must be the flag's own."""
+    data = json.loads((_export(tmp_path) / "data.json").read_text(encoding="utf-8"))
+    profile = data["profile"]
+    for segment in data["segments"]:
+        grade, window = segment["grade"], segment["grade_window"]
+        if "grade_pct" not in grade:
+            continue
+        assert profile["grade_pct"][window["index"]] == round(grade["grade_pct"], 2)
+        assert window["start_m"] <= profile["dist_m"][window["index"]] <= window["end_m"]
+        if not window["fallback"]:
+            assert window["end_m"] - window["start_m"] >= 10.0 - 0.1  # 0.1: rounding
