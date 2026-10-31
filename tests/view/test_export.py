@@ -67,6 +67,16 @@ def test_segments_carry_the_frame_ids_the_report_omits(tmp_path):
     assert first["representative_frame_id"] == first["frame_ids"][0]
 
 
+def test_each_frame_carries_where_along_the_segment_it_was_taken(tmp_path):
+    out = _export(tmp_path)
+    data = json.loads((out / "data.json").read_text(encoding="utf-8"))
+
+    for segment in data["segments"]:
+        assert len(segment["frame_m"]) == len(segment["frame_ids"])
+        assert all(segment["start_m"] <= m <= segment["end_m"] for m in segment["frame_m"])
+        assert segment["frame_m"] == sorted(segment["frame_m"])
+
+
 def test_the_report_travels_intact(tmp_path):
     """The viewer must not become a second, divergent summary of the run."""
     out = _export(tmp_path)
@@ -126,14 +136,14 @@ def test_a_saved_review_merges_into_the_matching_segment(tmp_path):
     still show up in data.json, or the viewer would have no way to display it."""
     route = tmp_path / "route"
     _write_route(route)
-    save_review_entry(route, "R01-0000", "delineation", "ok", "checked against the frame")
+    save_review_entry(route, "R01-0000", "delineation", 1, "checked against the frame")
 
     out = tmp_path / "view"
     export_view(route, load_config(), out)
     data = json.loads((out / "data.json").read_text(encoding="utf-8"))
 
     segment = next(s for s in data["segments"] if s["segment_id"] == "R01-0000")
-    assert segment["review"]["delineation"]["verdict"] == "ok"
+    assert segment["review"]["delineation"]["category"] == 1
     other = next(s for s in data["segments"] if s["segment_id"] != "R01-0000")
     assert other["review"] == {}
 

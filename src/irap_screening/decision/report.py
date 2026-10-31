@@ -84,11 +84,12 @@ def build_report(
                 coverage[name]["not_assessed"] += 1
                 uncovered = True
 
-        # Derived attribute, not a scoring module: it has no flag and does not
-        # count toward coverage.
+        # Derived attribute, not a scoring module: its flag colours the
+        # segment, but it does not count toward coverage.
         if quality_of_curve is not None:
             record["quality_of_curve"] = quality_of_curve.get(
-                segment.segment_id, {"code": None, "basis": ""}
+                segment.segment_id,
+                {"code": None, "basis": "", "flag": Flag.NOT_ASSESSED.value},
             )
 
         entry = existence_by_segment.get(segment.segment_id)

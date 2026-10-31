@@ -24,13 +24,16 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from irap_screening.decision.report import SCORING_MODULES
 from irap_screening.view.jobs import Conflict, Rebuild, Upload, pipeline_steps, valid_route_id
-from irap_screening.view.review import save_review_entry
+from irap_screening.view.review import (
+    REVIEW_CATEGORIES,
+    load_review,
+    save_recommendation_edit,
+    save_review_entry,
+)
 
 Resolver = Callable[[str, Path], Path]
 WriteTarget = Callable[[str], "Path | None"]
-_VERDICTS = ("ok", "flag")
 _UPLOAD_CHUNK = 1 << 20
 
 # The only route_dir subdirectories the viewer is allowed to read. Anything
@@ -156,6 +159,12 @@ class _QuietHandler(SimpleHTTPRequestHandler):
         if self._rebuild is not None and words == ["config"]:
             self._send_json(200, self._rebuild.state())
             return
+        # data.json holds the reviews as they stood when it was built; the page
+        # reads the live file too, so a saved review survives a reload.
+        route_dir = self._write_target(self.path)
+        if route_dir is not None:
+            self._send_json(200, load_review(route_dir))
+            return
         super().do_GET()
 
     def _receive_config(self, rebuild: Rebuild) -> None:
@@ -255,16 +264,23 @@ class _QuietHandler(SimpleHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             segment_id = str(payload["segment_id"])
             module = str(payload["module"])
-            verdict = str(payload["verdict"])
-            note = str(payload.get("note", ""))
+            if module == "recommendation":
+                text = str(payload["text"])
+            else:
+                category = payload["category"]
+                note = str(payload.get("note", ""))
         except (ValueError, KeyError, TypeError):
             self.send_error(400, "Malformed review payload")
             return
-        if module not in SCORING_MODULES or verdict not in _VERDICTS:
-            self.send_error(400, "Unknown module or verdict")
+        if module == "recommendation":
+            entry = save_recommendation_edit(route_dir, segment_id, text)
+        elif module not in REVIEW_CATEGORIES or (
+            category is not None and category not in REVIEW_CATEGORIES[module]
+        ):
+            self.send_error(400, "Unknown module or category")
             return
-
-        entry = save_review_entry(route_dir, segment_id, module, verdict, note)
+        else:
+            entry = save_review_entry(route_dir, segment_id, module, category, note)
         body = json.dumps(entry).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

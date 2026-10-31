@@ -17,6 +17,25 @@ five spurious critical segments on a road whose true maximum grade was about
 Differentiating speed amplifies its noise. KITTI's recorded velocity is clean;
 a phone's 1 Hz GPS speed is not, and this may need smoothing before provider
 data is trusted here.
+
+The remaining, fast error -- vibration, bumps -- is averaged out over
+window_m of road: pitch at a sample is the mean corrected accelerometer pitch
+over the window_m centred on it. Against KITTI's INS this took the error from
+0.38 to 0.26 degrees RMSE at 30 m. A complementary filter with the gyro used
+to do this job and did it worse: with no gyro bias correction it gave 1.05
+degrees on KITTI, and a bracket-mounted phone's 10 Hz pitch rate is mount
+vibration aliased into the band, which read 208 of 266 Samarahan segments as
+critical (D:/FYP/grade_review). The gyro is not read here.
+
+A segment is coded only from windows lying wholly inside it, as curvature is,
+so a slope in the next segment cannot set this one's grade.
+
+Where the route carries GPS altitude, the climb across the same window, over
+its length, is an independent cross-check, read under the same rule. The
+accelerometer still decides the flag; a segment where the two fall on
+opposite sides of the threshold is marked needs_review, as curvature marks
+its gyro/GPS disagreements. Altitude's 1 Hz fixes (about 9 m apart) cannot
+see a short pitch the accelerometer can, which is why it does not decide.
 """
 
 from __future__ import annotations
@@ -31,8 +50,12 @@ MODULE_NAME = "grade"
 
 
 def _accel_pitch(ax: np.ndarray, ay: np.ndarray, az: np.ndarray) -> np.ndarray:
-    """Pitch in radians from the gravity direction, positive nose-up."""
-    return np.arctan2(-ax, np.sqrt(ay**2 + az**2))
+    """Pitch in radians from the gravity direction, positive nose-up.
+
+    Nose up, the forward axis reads +g*sin(pitch): the specific force holding
+    the vehicle against gravity. KITTI's OXTS and phones both report it so.
+    """
+    return np.arctan2(ax, np.sqrt(ay**2 + az**2))
 
 
 def longitudinal_accel(route: AlignedRoute) -> np.ndarray:
@@ -55,12 +78,11 @@ def longitudinal_accel(route: AlignedRoute) -> np.ndarray:
 
 
 def pitch_series(route: AlignedRoute, cfg: Settings) -> np.ndarray:
-    """Complementary-filtered pitch in radians, one value per IMU sample.
+    """Pitch in radians, one value per IMU sample.
 
-    Note: alpha is applied as a fixed per-step weight, so the filter's effective
-    time constant scales with the IMU sample interval. This is correct for the
-    regular sampling this pipeline assumes; under irregular sampling alpha would
-    need deriving per step from a time constant and the actual dt.
+    The accelerometer's pitch with the vehicle's own acceleration removed,
+    averaged over the window_m of road centred on each sample. Near either end
+    of the route the window holds whatever samples it can.
     """
     if not route.imu:
         return np.zeros(0)
@@ -68,21 +90,56 @@ def pitch_series(route: AlignedRoute, cfg: Settings) -> np.ndarray:
     ax = np.array([s.ax for s in route.imu], dtype=float)
     ay = np.array([s.ay for s in route.imu], dtype=float)
     az = np.array([s.az for s in route.imu], dtype=float)
-    gy = np.array([s.gy for s in route.imu], dtype=float)
-    times = np.array([s.timestamp_utc.timestamp() for s in route.imu], dtype=float)
 
     # Remove the vehicle's own longitudinal acceleration, which the sensor
     # reports in the same channel as the gravity projection.
     accel_pitch = _accel_pitch(ax - longitudinal_accel(route), ay, az)
-    alpha = cfg.grade.comp_filter_alpha
 
-    fused = np.empty_like(accel_pitch)
-    fused[0] = accel_pitch[0]
-    for i in range(1, len(fused)):
-        dt = times[i] - times[i - 1]
-        predicted = fused[i - 1] + gy[i] * dt
-        fused[i] = alpha * predicted + (1.0 - alpha) * accel_pitch[i]
-    return fused
+    # IMU distance is interpolated from the GPS track, so it never decreases.
+    dist = route.imu_dist_m
+    half = cfg.grade.window_m / 2.0
+    lo = np.searchsorted(dist, dist - half, side="left")
+    hi = np.searchsorted(dist, dist + half, side="right")
+    total = np.concatenate([[0.0], np.cumsum(accel_pitch)])
+    return (total[hi] - total[lo]) / (hi - lo)
+
+
+def gps_grade_series(route: AlignedRoute, cfg: Settings) -> np.ndarray | None:
+    """Grade (%) from GPS altitude: the climb across the window_m centred on each
+    IMU sample, over window_m. NaN where the window runs past the altitude
+    record; None when the route carries no altitude.
+    """
+    altitude = np.array(
+        [np.nan if fix.altitude is None else fix.altitude for fix in route.gps], dtype=float
+    )
+    usable = np.isfinite(altitude) & np.concatenate([[True], np.diff(route.gps_dist_m) > 0.0])
+    if usable.sum() < 2 or not route.imu:
+        return None
+    along = route.gps_dist_m[usable]
+    # A climb between consecutive fixes steeper than any road is the receiver,
+    # not the road: a phone's altitude jumps by metres in a second (36 such
+    # steps over 1.5 m on one Samarahan route). Drop those steps and rebuild the
+    # profile from the rest, so a jump that persists does not offset what follows.
+    climb = np.diff(altitude[usable])
+    implausible = np.abs(climb) > cfg.grade.gps_max_step_pct / 100.0 * np.diff(along)
+    climb[implausible] = 0.0
+    height = altitude[usable][0] + np.concatenate([[0.0], np.cumsum(climb)])
+    dist = route.imu_dist_m
+    half = cfg.grade.window_m / 2.0
+    climb = np.interp(dist + half, along, height) - np.interp(dist - half, along, height)
+    inside = (dist - half >= along[0]) & (dist + half <= along[-1])
+    return np.where(inside, climb / cfg.grade.window_m * 100.0, np.nan)
+
+
+def inner_samples(route: AlignedRoute, segment: Segment, cfg: Settings) -> np.ndarray:
+    """Indices of the segment's IMU samples whose window_m lies wholly inside it.
+
+    Shared by the flag and the viewer, so both read the same samples.
+    """
+    index = np.arange(segment.imu_start, segment.imu_end)
+    dist = route.imu_dist_m[segment.imu_start : segment.imu_end]
+    half = cfg.grade.window_m / 2.0
+    return index[(dist - half >= segment.start_m) & (dist + half <= segment.end_m)]
 
 
 def _sustained_steepest_grade(
@@ -169,13 +226,12 @@ def analyse_grade(
     """One ModuleResult per segment, aggregating by steepest sustained grade."""
     pitch = pitch_series(route, cfg)
     grade_pct = np.tan(pitch) * 100.0
+    gps_grade = gps_grade_series(route, cfg)
     min_length_m = cfg.segment.length_m / 10.0  # iRAP: one tenth of the coding segment
 
     results: list[ModuleResult] = []
     for segment in segments:
-        window = grade_pct[segment.imu_start : segment.imu_end]
-        window_dist = route.imu_dist_m[segment.imu_start : segment.imu_end]
-        if window.size == 0:
+        if segment.imu_end <= segment.imu_start:
             results.append(
                 ModuleResult(
                     module=MODULE_NAME,
@@ -185,27 +241,46 @@ def analyse_grade(
                 )
             )
             continue
+        samples = inner_samples(route, segment, cfg)
+        if samples.size == 0:
+            results.append(
+                ModuleResult(
+                    module=MODULE_NAME,
+                    segment_id=segment.segment_id,
+                    flag=Flag.NOT_ASSESSED,
+                    notes=(
+                        f"No {cfg.grade.window_m:.0f} m window of road fits inside "
+                        "this segment."
+                    ),
+                )
+            )
+            continue
 
         steepest, steepest_index = _sustained_steepest_grade(
-            window, window_dist, min_length_m
+            grade_pct[samples], route.imu_dist_m[samples], min_length_m
         )
-        flag = (
-            Flag.CRITICAL
-            if abs(steepest) >= cfg.grade.threshold_pct
-            else Flag.NORMAL
-        )
+        critical = abs(steepest) >= cfg.grade.threshold_pct
+        metrics = {
+            "grade_pct": steepest,
+            "pitch_deg": float(np.degrees(pitch[samples[steepest_index]])),
+            "irap_category": float(irap_grade_category(steepest)),
+        }
+        if gps_grade is not None:
+            checked = samples[np.isfinite(gps_grade[samples])]
+            if checked.size:
+                gps_steepest, _ = _sustained_steepest_grade(
+                    gps_grade[checked], route.imu_dist_m[checked], min_length_m
+                )
+                metrics["gps_grade_pct"] = gps_steepest
+                gps_critical = abs(gps_steepest) >= cfg.grade.threshold_pct
+                metrics["needs_review"] = float(gps_critical != critical)
+
         results.append(
             ModuleResult(
                 module=MODULE_NAME,
                 segment_id=segment.segment_id,
-                flag=flag,
-                metrics={
-                    "grade_pct": steepest,
-                    "pitch_deg": float(
-                        np.degrees(pitch[segment.imu_start + steepest_index])
-                    ),
-                    "irap_category": float(irap_grade_category(steepest)),
-                },
+                flag=Flag.CRITICAL if critical else Flag.NORMAL,
+                metrics=metrics,
             )
         )
     return results

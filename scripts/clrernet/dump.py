@@ -38,17 +38,25 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 # CULane, which the weights were trained on: 1640x590 frames with the top 270
 # rows cut, so the model learned roads framed at 1640:320 before the resize.
 TRAIN_ASPECT = 1640 / (590 - 270)
+# Extra rows kept above the CULane-shaped band, as a fraction of frame height.
+# Tuned on the Neuon phone routes (mounted behind the mirror, horizon at
+# 0.60-0.70 of the height): the bare band cut at ~0.65 and often lost the
+# centre line on rural roads; 0.10 more (crop ~0.55) recovered it, with
+# highway unchanged. A camera pitched far from that mount may need its own
+# --crop-top.
+HORIZON_MARGIN = 0.10
 
 
 def auto_crop_top(width: int, height: int, crop_bottom: float = 0.0) -> float:
-    """Fraction of the height to cut from the top so the kept band is CULane-shaped.
+    """Fraction of the height to cut from the top: a CULane-shaped band plus a margin.
 
     Frames arrive in whatever size the camera wrote. Keeping a band of
     width / TRAIN_ASPECT rows gives the model the framing it was trained on,
-    whatever that size: on 16:9 phone footage it cuts about 65% (the
-    horizon sits near there), on KITTI about 36%. It assumes, as CULane
-    does, that the road fills the bottom of the frame -- no bonnet; cut one
-    with crop_bottom. A frame too wide for the band keeps every row.
+    whatever that size; HORIZON_MARGIN of the height is kept above it so the
+    far road near the horizon is not cut. On 16:9 phone footage this cuts
+    about 55%. It assumes, as CULane does, that the road fills the bottom of
+    the frame -- no bonnet; cut one with crop_bottom. A frame too wide for
+    the band keeps every row.
 
     The result is snapped to a whole row of CLRerNet's reference height,
     because cut_height is an integer and irap import-lanes requires
@@ -60,7 +68,7 @@ def auto_crop_top(width: int, height: int, crop_bottom: float = 0.0) -> float:
             "Pass --crop-top explicitly to run it anyway."
         )
     kept = width / TRAIN_ASPECT / height
-    crop_top = max(0.0, 1.0 - crop_bottom - kept)
+    crop_top = max(0.0, 1.0 - crop_bottom - kept - HORIZON_MARGIN)
     return round(ORI_IMG_H * crop_top) / ORI_IMG_H
 
 

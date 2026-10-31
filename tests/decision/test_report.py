@@ -87,7 +87,7 @@ def _report():
 def test_report_carries_schema_version_and_config_snapshot():
     report = _report()
     assert report["schema_version"] == SCHEMA_VERSION
-    assert report["config"]["curvature"]["threshold_m"] == 400
+    assert report["config"]["curvature"]["threshold_m"] == 800
 
 
 def test_raw_metrics_travel_alongside_flags():

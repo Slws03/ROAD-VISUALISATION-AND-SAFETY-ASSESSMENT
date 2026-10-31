@@ -27,6 +27,7 @@ from irap_screening.modules.grade import (
     _accel_pitch,
     longitudinal_accel,
     pitch_series,
+    inner_samples,
     sustained_grade_window,
 )
 from irap_screening.pipeline import run_pipeline
@@ -69,7 +70,6 @@ def build_profile(route: AlignedRoute, cfg: Settings) -> dict[str, list[float | 
         "long_accel_mps2": _rounded(a_long, 3),
         "pitch_accel_raw_deg": _rounded(np.degrees(_accel_pitch(ax, ay, az)), 3),
         "pitch_accel_deg": _rounded(np.degrees(_accel_pitch(ax - a_long, ay, az)), 3),
-        "pitch_rate_deg_s": _rounded(np.degrees([s.gy for s in route.imu]), 3),
         "pitch_deg": _rounded(np.degrees(pitch), 3),
     }
 
@@ -85,16 +85,16 @@ def grade_windows(
     min_length_m = cfg.segment.length_m / 10.0  # as analyse_grade
     windows = {}
     for segment in segments:
-        lo, hi = segment.imu_start, segment.imu_end
-        if hi <= lo:
+        samples = inner_samples(route, segment, cfg)
+        if samples.size == 0:
             continue
         index, left, right, fallback = sustained_grade_window(
-            grade[lo:hi], route.imu_dist_m[lo:hi], min_length_m
+            grade[samples], route.imu_dist_m[samples], min_length_m
         )
         windows[segment.segment_id] = {
-            "index": lo + index,
-            "start_m": round(float(route.imu_dist_m[lo + left]), 1),
-            "end_m": round(float(route.imu_dist_m[lo + right]), 1),
+            "index": int(samples[index]),
+            "start_m": round(float(route.imu_dist_m[samples[left]]), 1),
+            "end_m": round(float(route.imu_dist_m[samples[right]]), 1),
             "fallback": fallback,
         }
     return windows
@@ -119,6 +119,12 @@ def export_view(
     }
     referenced_ids = {fid for ids in frame_ids_by_segment.values() for fid in ids}
     frames_by_id = {frame.frame_id: frame for frame in route.frames}
+    # Interpolated from the frame's timestamp between GPS fixes: an estimate of
+    # where the photo was taken, not a measurement.
+    dist_by_id = {
+        frame.frame_id: float(dist)
+        for frame, dist in zip(route.frames, route.frame_dist_m, strict=True)
+    }
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -130,6 +136,10 @@ def export_view(
         {
             **segment,
             "frame_ids": frame_ids_by_segment.get(segment["segment_id"], []),
+            "frame_m": [
+                round(dist_by_id[fid], 1)
+                for fid in frame_ids_by_segment.get(segment["segment_id"], [])
+            ],
             "review": review_by_segment.get(segment["segment_id"], {}),
             "grade_window": windows.get(segment["segment_id"]),
         }

@@ -37,11 +37,11 @@ def test_curved_route_traces_a_circle_of_that_radius():
 
 
 def test_graded_route_accelerometer_recovers_the_requested_grade():
-    """atan2(-ax, sqrt(ay^2+az^2)) then tan()*100 must return the grade asked for."""
+    """atan2(ax, sqrt(ay^2+az^2)) then tan()*100 must return the grade asked for."""
     grade = 8.0
     _, _, imu = graded_route(grade_pct=grade, length_m=300.0)
     sample = imu[0]
-    pitch = math.atan2(-sample.ax, math.hypot(sample.ay, sample.az))
+    pitch = math.atan2(sample.ax, math.hypot(sample.ay, sample.az))
     assert math.tan(pitch) * 100.0 == pytest.approx(grade, rel=1e-9)
 
 
@@ -56,7 +56,7 @@ def test_spiked_grade_route_recovers_background_and_spike_grades():
     )
 
     def grade_of(sample) -> float:
-        pitch = math.atan2(-sample.ax, math.hypot(sample.ay, sample.az))
+        pitch = math.atan2(sample.ax, math.hypot(sample.ay, sample.az))
         return math.tan(pitch) * 100.0
 
     # 40 m / 16.7 m/s ~= 2.40 s; well before that, still background.

@@ -74,6 +74,24 @@ def test_weber_contrast_is_near_zero_for_a_faded_line():
     assert contrast == pytest.approx(0.05, abs=0.03)
 
 
+def test_a_marking_a_few_pixels_off_the_lane_point_is_still_found_on_a_large_frame():
+    """CLRerNet's points can sit 8 px off the paint on a 1920-wide frame."""
+    gray = np.full((1080, 1920), BG_LEVEL, dtype=np.uint8)
+    gray[:, 1008:1015] = 200  # stripe centred 11 px right of the point at 1000
+    assert weber_contrast_at(gray, 1000.0, 500.0, 81) == pytest.approx(0.0, abs=0.01)
+    assert weber_contrast_at(gray, 1000.0, 500.0, 81, peak_frac=0.005) == pytest.approx(
+        1.0, rel=0.05
+    )
+
+
+def test_the_peak_window_never_shrinks_below_4_px_on_a_small_frame():
+    gray = np.full((480, 640), BG_LEVEL, dtype=np.uint8)
+    gray[:, LINE_X + 4] = 200  # 0.005 * 640 rounds to 3 px; the 4 px floor still reaches it
+    assert weber_contrast_at(gray, float(LINE_X), 300.0, 81, peak_frac=0.005) == pytest.approx(
+        1.0, rel=0.05
+    )
+
+
 def test_bright_marking_is_normal(tmp_path: Path):
     results = analyse_lane(*_build(tmp_path, line_level=200), image_root=tmp_path)
     assert results[0].flag is Flag.NORMAL
@@ -142,18 +160,29 @@ def test_evidence_lists_contributing_instance_ids(tmp_path: Path):
     assert all("#lane#" in instance_id for instance_id in results[0].evidence)
 
 
-def test_aggregation_takes_the_worst_frame(tmp_path: Path):
-    """max_risk: one faded frame among bright ones codes the whole segment."""
+def _mixed(tmp_path: Path, faded) -> list:
     frames, gps, imu = straight_route(length_m=200.0)
     for index, frame in enumerate(frames):
-        _write_frame(tmp_path / frame.path, 110 if index == 0 else 200)
+        _write_frame(tmp_path / frame.path, 110 if faded(index) else 200)
     route = align_route(frames, gps, imu)
     cfg = load_config()
     segments = build_segments(route, cfg)
     detections = DetectionSet(
         lane={f.frame_id: _lane_record(f.frame_id, True) for f in frames}
     )
-    results = analyse_lane(route, segments, detections, cfg, image_root=tmp_path)
+    return analyse_lane(route, segments, detections, cfg, image_root=tmp_path)
+
+
+def test_one_faded_line_does_not_condemn_a_generally_visible_segment(tmp_path: Path):
+    """iRAP Adequate asks for markings "generally present and visible", not every line."""
+    results = _mixed(tmp_path, lambda index: index == 0)
+    assert results[0].flag is Flag.NORMAL
+    assert results[0].metrics["lines_visible"] == results[0].metrics["lines_total"] - 1
+    assert results[0].metrics["weber_contrast"] < 0.35
+
+
+def test_mostly_faded_lines_are_critical(tmp_path: Path):
+    results = _mixed(tmp_path, lambda index: index != 0)
     assert results[0].flag is Flag.CRITICAL
 
 

@@ -15,6 +15,9 @@ curve. Of those this pipeline sees signs and delineation only, so:
 Sight distance, lighting, advisory speed plates and telemetry-based speed
 behaviour are not observed, so a curve coded Adequate here may still be Poor
 on site.
+
+Each code carries a flag so the attribute colours the segment like a scored
+module: Poor is critical, Adequate and Not applicable are normal.
 """
 
 from __future__ import annotations
@@ -31,6 +34,12 @@ from irap_screening.decision.gapcheck import (
 from irap_screening.io.schema import ExistenceResult, Flag, ModuleResult, Segment
 
 ADEQUATE, POOR, NOT_APPLICABLE = 1, 2, 3
+_FLAG = {
+    None: Flag.NOT_ASSESSED,
+    ADEQUATE: Flag.NORMAL,
+    POOR: Flag.CRITICAL,
+    NOT_APPLICABLE: Flag.NORMAL,
+}
 
 
 def _is_curving(result: ModuleResult) -> bool:
@@ -44,7 +53,7 @@ def code_quality_of_curve(
     existence: list[ExistenceResult],
     cfg: Settings,
 ) -> dict[str, dict[str, Any]]:
-    """Return {segment_id: {"code": 1|2|3|None, "basis": str}}."""
+    """Return {segment_id: {"code": 1|2|3|None, "basis": str, "flag": str}}."""
     curvature = _by_segment(module_results.get("curvature", []))
     delineation = _by_segment(module_results.get("delineation", []))
     spans = curve_spans(segments, module_results, is_curve=_is_curving)
@@ -97,4 +106,6 @@ def code_quality_of_curve(
                 "code": POOR,
                 "basis": "No advance bend warning sign or chevron markers were detected.",
             }
+    for entry in coded.values():
+        entry["flag"] = _FLAG[entry["code"]].value
     return coded

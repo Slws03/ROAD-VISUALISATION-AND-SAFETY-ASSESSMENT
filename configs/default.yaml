@@ -5,22 +5,35 @@ segment:
   length_m: 100                  # iRAP coding unit (Star Rating manual)
 
 curvature:
-  threshold_m: 400               # iRAP Curvature Risk Factor boundary (provisional)
+  threshold_m: 800               # iRAP curvature category 1 boundary: anything
+                                 # sharper than straight/gently curving is critical
+                                 # (trial; was 400, the category 2/3 boundary)
   v_min_mps: 5.0                 # below this, curvature is not_assessed
   stationary_speed_mps: 0.5      # vehicle stopped; distinct from v_min_mps, which
                                  # is the floor for curvature being assessable at all
   stationary_accel_var: 0.05     # variance ceiling that counts as stationary
+  window_m: 50                   # TRIAL. Curvature is the heading change over this
+                                 # much road, not v/|yaw| per gyro sample: iRAP codes
+                                 # road geometry, and per-sample noise read straight
+                                 # phone-surveyed road as 100 m curves. 50 m agreed
+                                 # best with GPS and OSM curvature on the Samarahan
+                                 # routes (D:/FYP/curvature_review); longer windows
+                                 # start missing short curves.
 
 grade:
   threshold_pct: 7.5             # iRAP Grade Risk Factor boundary (provisional)
-  comp_filter_alpha: 0.98        # complementary filter: gyro weight.
-                                 # PROVISIONAL and measurably poor: against
-                                 # KITTI 0042's INS pitch, 0.98 gives 1.05 deg
-                                 # RMSE where 0.5-0.8 give 0.30-0.32. This
-                                 # module's gyro branch has no bias correction
-                                 # (curvature's does), so a heavy gyro weight
-                                 # lets drift accumulate. Left unchanged: one
-                                 # drive is no basis for retuning a default.
+  window_m: 30                   # TRIAL. Accelerometer pitch is averaged over this
+                                 # much road (after the vehicle's own acceleration
+                                 # is removed); the gyro is no longer used. KITTI:
+                                 # 0.26 deg RMSE vs INS at 30 m, 0.28 at 50 m;
+                                 # Samarahan: 55 vs 41 critical. Shorter keeps short
+                                 # steep pitches (a 10% one needs ~23 m at 30 m,
+                                 # ~38 m at 50 m) but lets more phone noise through
+                                 # (D:/FYP/grade_review).
+  gps_max_step_pct: 20           # GPS-altitude cross-check only: a climb between
+                                 # consecutive fixes steeper than this is a receiver
+                                 # jump, not road, and is dropped. Samarahan: caps
+                                 # the cross-check's worst segment at 15% (was 43.5%).
 
 lane:
   clrernet_conf: 0.41            # CLRerNet official default
@@ -44,7 +57,21 @@ lane:
                                  # attribute -- it does not cover hazard
                                  # warning signs, a known gap). contrast >=
                                  # this reads adequate; below it, poor.
+  min_visible_share: 0.5         # TRIAL. Share of a segment's detected lines
+                                 # (every line in every frame) that must clear
+                                 # weber_adequate for Adequate: iRAP asks that
+                                 # markings be "generally present and visible",
+                                 # not every line. Delineation follows AiRAP,
+                                 # determined from road lines/markings/lanes
+                                 # only; hazard warning signs are not assessed.
   bg_window: 81                  # background window for contrast sampling
+  peak_window_frac: 0.005        # PROVISIONAL. The marking's peak is sought
+                                 # this share of the image width either side
+                                 # of each lane point (never under 4 px).
+                                 # CLRerNet's points land 6-10 px off the paint
+                                 # on 1920-wide Neuon frames; a fixed +-4 px
+                                 # missed it and graded clear dashed lines at
+                                 # 0.08-0.14. 0.005 is +-10 px at 1920, +-5 at 960.
 
 doubleline:                      # from the doubleline_coord_scan experiment
   window_steps: [50, 90, 130, 180, 240]

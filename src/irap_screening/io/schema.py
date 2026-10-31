@@ -45,6 +45,8 @@ class GpsFix(BaseModel):
     speed_mps: float | None = None
     altitude: float | None = None
     hdop: float | None = None
+    # Degrees clockwise from north, as the receiver reports its course.
+    bearing_deg: float | None = None
 
 
 class ImuSample(BaseModel):

@@ -32,15 +32,17 @@ class SegmentSettings(_Section):
 
 
 class CurvatureSettings(_Section):
-    threshold_m: PositiveFloat = 400.0
+    threshold_m: PositiveFloat = 800.0
     v_min_mps: PositiveFloat = 5.0
     stationary_speed_mps: PositiveFloat = 0.5
     stationary_accel_var: PositiveFloat = 0.05
+    window_m: PositiveFloat = 50.0
 
 
 class GradeSettings(_Section):
     threshold_pct: PositiveFloat = 7.5
-    comp_filter_alpha: float = Field(default=0.98, gt=0.0, lt=1.0)
+    window_m: PositiveFloat = 30.0
+    gps_max_step_pct: PositiveFloat = 20.0
 
 
 class LaneSettings(_Section):
@@ -48,7 +50,9 @@ class LaneSettings(_Section):
     contrast_percentile: float = Field(default=85.0, gt=0.0, le=100.0)
     min_detection_rate: float = Field(default=0.5, ge=0.0, le=1.0)
     weber_adequate: float = Field(default=0.35, ge=0.0)
+    min_visible_share: float = Field(default=0.5, gt=0.0, le=1.0)
     bg_window: PositiveInt = 81
+    peak_window_frac: float = Field(default=0.005, ge=0.0, lt=0.5)
 
 
 class DoubleLineSettings(_Section):

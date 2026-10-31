@@ -7,195 +7,328 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="https://unpkg.com/uplot@1.6.31/dist/uPlot.min.css">
 <style>
+  /* Light is the default; [data-theme="dark"] mirrors every role. */
   :root {
-    --bg: #14161a;
-    --panel: #1c1f26;
-    --line: #2c313b;
-    --text: #e6e8ec;
-    --muted: #949bab;
-    --normal: #3fb950;
-    --watch: #d29922;
-    --critical: #f85149;
-    --unassessed: #6e7681;
-    --surface2: #262b35;
-    --surface2-hover: #323847;
-    --hover: #232730;
-    --active-bg: #2b3040;
-    --map-bg: #0f1114;
-    --rec-bg: #21242c;
-    --border2: #4b5468;
-    --border2-hover: #6a7284;
-    --gap: #a371f7;
-  }
-  :root[data-theme="light"] {
-    --bg: #f4f5f7;
+    color-scheme: light;
+    --bg: #f5f6f8;
     --panel: #ffffff;
-    --line: #e2e4ea;
-    --text: #1b1e24;
-    --muted: #6b7280;
-    --normal: #1a7f37;
-    --watch: #9a6700;
-    --critical: #cf222e;
-    --unassessed: #6e7681;
-    --surface2: #eceef2;
-    --surface2-hover: #dde1e8;
-    --hover: #eef1f5;
-    --active-bg: #dfe4ee;
+    --subtle: #f9fafb;
+    --line: #e5e7eb;
+    --border2: #d6dae1;
+    --border2-hover: #aab1bd;
+    --text: #111827;
+    --muted: #5f6673;
+    --hover: #f3f4f6;
+    --active-bg: #eef2ff;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --on-accent: #ffffff;
+    --normal: #15803d;
+    --normal-bg: #ecfdf3;
+    --critical: #c81e1e;
+    --critical-bg: #fef2f2;
+    --unassessed: #6b7280;
+    --unassessed-bg: #f3f4f6;
+    --watch: #b45309;
+    --watch-bg: #fffbeb;
+    --gap: #6d28d9;
+    --gap-bg: #f5f3ff;
+    --gap-line: #ddd6fe;
     --map-bg: #e5e7eb;
-    --rec-bg: #f6f7f9;
-    --border2: #c7ccd6;
-    --border2-hover: #98a0ae;
-    --gap: #8250df;
+    --frame-bg: #0b0c0e;
   }
-  * { box-sizing: border-box; }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0e0f12;
+    --panel: #16181d;
+    --subtle: #1a1d23;
+    --line: #262a31;
+    --border2: #353a43;
+    --border2-hover: #555c68;
+    --text: #e7e9ee;
+    --muted: #8b93a1;
+    --hover: #1d2026;
+    --active-bg: #1b2440;
+    --accent: #5b8cf7;
+    --accent-hover: #7aa2f9;
+    --on-accent: #0b0c0e;
+    --normal: #4ade80;
+    --normal-bg: #10291b;
+    --critical: #f87171;
+    --critical-bg: #2c1416;
+    --unassessed: #9aa1ad;
+    --unassessed-bg: #22252c;
+    --watch: #fbbf24;
+    --watch-bg: #2b2210;
+    --gap: #a78bfa;
+    --gap-bg: #221a38;
+    --gap-line: #3b2f63;
+    --map-bg: #1a1d23;
+    --frame-bg: #000000;
+  }
+  * { box-sizing: border-box; scrollbar-color: var(--border2) transparent; }
+  ::selection { background: var(--active-bg); color: var(--text); }
+  input[type="checkbox"] { accent-color: var(--accent); }
+  :is(button, select, input, textarea, summary):focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
   body {
     /* Without overflow:hidden the window scrolls instead of the panels, which
-       breaks scroll preservation when stepping frames and drags the sidebar
-       off-screen. */
-    margin: 0; height: 100vh; overflow: hidden; display: flex; padding: 14px;
+       breaks scroll preservation when stepping frames. */
+    margin: 0; height: 100vh; overflow: hidden; display: flex;
     background: var(--bg); color: var(--text);
     font: 14px/1.5 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
   }
-  #app {
-    flex: 1; display: flex; min-width: 0; min-height: 0;
-    border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
-  }
+  #app { flex: 1; display: flex; min-width: 0; min-height: 0; }
+
+  /* Sidebar */
   aside {
-    width: 340px; flex: none; display: flex; flex-direction: column;
-    border-right: 1px solid var(--line); background: var(--panel); min-width: 0;
+    width: 320px; flex: none; display: flex; flex-direction: column; min-width: 0;
+    border-right: 1px solid var(--line); background: var(--panel);
   }
   header {
-    padding: 14px 16px; border-bottom: 1px solid var(--line);
+    padding: 16px; border-bottom: 1px solid var(--line);
     display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
   }
   #title-block { min-width: 0; flex: 1; }
-  h1 { margin: 0 0 2px; font-size: 15px; }
+  h1 { margin: 0 0 2px; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
   .sub { color: var(--muted); font-size: 12px; }
-  #theme-toggle { flex: none; padding: 5px; display: flex; }
-  #route-select {
-    display: none; margin-top: 8px; width: 100%;
-    background: var(--surface2); color: var(--text); border: 1px solid var(--line);
-    border-radius: 4px; padding: 4px 8px; font: inherit;
-  }
-  #actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+  #theme-toggle { flex: none; padding: 6px; display: flex; }
+  #route-select { display: none; margin-top: 10px; width: 100%; }
+  #actions { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
   #job-status { margin-top: 4px; overflow-wrap: anywhere; }
-  #coverage { padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 12px; }
-  #coverage span { color: var(--muted); }
-  #segment-filters {
-    padding: 8px 16px; border-bottom: 1px solid var(--line);
-    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  #coverage {
+    padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 12px;
+    display: grid; gap: 2px;
   }
-  .chip {
-    background: transparent; border: 1px solid var(--line); color: var(--muted);
-    border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; font: inherit;
+  #coverage div { display: flex; justify-content: space-between; gap: 8px; text-transform: capitalize; }
+  #coverage span { color: var(--muted); text-transform: none; font-variant-numeric: tabular-nums; }
+
+  /* Filters: one bar in the sidebar, a panel that drops over the list. */
+  #filter-bar { position: relative; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  #filter-row { display: flex; align-items: center; gap: 8px; }
+  #filter-toggle { display: inline-flex; align-items: center; gap: 6px; }
+  #filter-toggle[aria-expanded="true"] { background: var(--hover); border-color: var(--border2-hover); }
+  #filter-toggle .badge {
+    min-width: 18px; padding: 0 5px; border-radius: 999px; font-size: 11px; line-height: 18px;
+    text-align: center; background: var(--accent); color: var(--on-accent);
+    font-variant-numeric: tabular-nums;
   }
-  .chip.critical.active { background: var(--critical); border-color: var(--critical); color: #fff; }
-  .chip.gap.active { background: var(--gap); border-color: var(--gap); color: #fff; }
-  .chip.uncovered.active { background: var(--muted); border-color: var(--muted); color: #fff; }
-  #filter-status { color: var(--muted); font-size: 12px; margin-left: auto; }
-  #segments { flex: 1; overflow-y: auto; }
+  #filter-toggle .badge:empty { display: none; }
+  #filter-status { color: var(--muted); font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
+  #filter-tokens { display: flex; flex-wrap: wrap; gap: 4px; }
+  #filter-tokens:not(:empty) { margin-top: 8px; }
+  .token {
+    display: inline-flex; align-items: center; gap: 2px; max-width: 100%;
+    padding: 1px 2px 1px 8px; border-radius: 6px; font-size: 12px;
+    background: var(--active-bg); color: var(--accent);
+  }
+  .token b { font-weight: 500; }
+  .token span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .token button { padding: 0 5px; border: 0; background: none; color: inherit; line-height: 18px; }
+  .token button:hover { background: none; color: var(--accent-hover); }
+  #filter-clear { padding: 1px 6px; border: 0; background: none; color: var(--muted); font-size: 12px; }
+  #filter-clear:hover { background: none; color: var(--text); }
+  #filter-panel {
+    position: absolute; top: calc(100% - 4px); left: 8px; right: 8px; z-index: 1100;
+    max-height: min(580px, 72vh); overflow-y: auto; padding: 4px 14px 14px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 16px 40px rgba(15, 23, 42, .16), 0 2px 6px rgba(15, 23, 42, .08);
+  }
+  #filter-panel[hidden] { display: none; }
+  .facet { padding-top: 12px; }
+  .facet h3 {
+    margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--text);
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .facet h3 small { font-weight: 400; font-size: 11px; color: var(--accent); }
+  .facet-options { display: flex; flex-wrap: wrap; gap: 4px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+    border-radius: 999px; font-size: 12px; line-height: 18px; white-space: nowrap;
+    background: var(--panel); border: 1px solid var(--line); color: var(--text);
+  }
+  .pill:hover { border-color: var(--border2-hover); background: var(--hover); }
+  .pill .code { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .pill .n { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .pill.zero:not([aria-pressed="true"]) { opacity: .45; }
+  .pill[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .pill[aria-pressed="true"] .code, .pill[aria-pressed="true"] .n { color: inherit; opacity: .75; }
+  .pill.critical[aria-pressed="true"] { background: var(--critical); border-color: var(--critical); color: var(--panel); }
+  .pill.gap[aria-pressed="true"] { background: var(--gap); border-color: var(--gap); color: var(--panel); }
+
+  /* Segment list */
+  #segments { flex: 1; overflow-y: auto; padding: 6px 8px 12px; }
   .seg {
-    padding: 9px 16px; border-bottom: 1px solid var(--line);
-    border-left: 3px solid transparent;
-    cursor: pointer; display: flex; align-items: center; gap: 9px;
+    padding: 7px 10px; border-radius: 8px; cursor: pointer;
+    display: flex; align-items: center; gap: 10px; font-size: 13px;
   }
   .seg:hover { background: var(--hover); }
   .seg.active { background: var(--active-bg); }
-  /* A gap-check recommendation is a missing mitigation, not an attribute
-     severity -- a distinct accent color and a border (not a dot) keeps it
-     from being read as another module flag. */
-  .seg.has-gap { border-left-color: var(--gap); }
+  .seg.active .id { color: var(--accent); font-weight: 600; }
   .seg .id { font-variant-numeric: tabular-nums; }
-  .seg .range { color: var(--muted); font-size: 12px; margin-left: auto; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .seg .range { color: var(--muted); font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
   .dot.normal { background: var(--normal); }
   .dot.watch { background: var(--watch); }
   .dot.critical { background: var(--critical); }
   .dot.not_assessed { background: var(--unassessed); }
-  #map {
-    height: 220px; flex: none; border-top: 1px solid var(--line);
-    background: var(--map-bg); position: relative;
+  .tag {
+    font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 999px;
+    background: var(--unassessed-bg); color: var(--muted); white-space: nowrap;
   }
-  #map-grip {
-    position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
-    z-index: 1000; cursor: nesw-resize; border-radius: 4px;
-    background: var(--surface2); border: 1px solid var(--border2); color: var(--text);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, .5);
-    display: flex; align-items: center; justify-content: center;
+  .tag.gap { background: var(--gap-bg); color: var(--gap); }
+
+  /* Main: evidence on the left (frame, map, signs), judgement on the right
+     (coding, recommendations), so a frame and its coding share one screen. */
+  main {
+    flex: 1; min-width: 0; overflow-y: auto; padding: 20px 24px 32px;
+    display: grid; gap: 16px; align-content: start;
+    grid-template-columns: minmax(0, 1.3fr) minmax(400px, 1fr);
+    grid-template-areas: "head head" "left right";
   }
-  #map-grip:hover, #map-grip.active { background: var(--surface2-hover); border-color: var(--border2-hover); }
-  main { flex: 1; overflow-y: auto; padding: 20px 24px; }
-  .empty { color: var(--muted); margin-top: 40px; text-align: center; }
-  figure { margin: 0 0 16px; }
-  .frame-wrap {
-    position: relative; max-width: 900px; overflow: hidden;
-    border: 1px solid var(--line); border-radius: 4px; background: #000;
+  /* Each column stacks on its own, so a tall coding list never stretches the frame card. */
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .col-left { grid-area: left; }
+  .col-right { grid-area: right; }
+  @media (max-width: 1180px) {
+    main { grid-template-columns: minmax(0, 1fr); grid-template-areas: none; }
+    .col { display: contents; }
+    .card.evidence { order: 1; } .card.coding { order: 2; } #map-card { order: 3; }
+    .card.signs { order: 4; } .card.recs { order: 5; }
   }
+  #detail { display: contents; }
+  .seg-head { grid-area: head; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h2.seg-title { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+  .seg-range { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .seg-pos { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .empty { grid-area: head; color: var(--muted); padding: 40px 0; text-align: center; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    min-width: 0; display: flex; flex-direction: column;
+  }
+  .card > * { flex-shrink: 0; }
+  #map-card { height: 300px; overflow: hidden; }
+  .card-head {
+    display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .card-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
+  .card-head .sub { margin-left: auto; }
+  .card-body { padding: 14px 16px; }
+  #map { flex: 1; min-height: 0; background: var(--map-bg); border-radius: 0 0 11px 11px; }
+
+  /* Evidence */
+  figure { margin: 0; }
+  .frame-wrap { position: relative; overflow: hidden; border-radius: 8px; background: var(--frame-bg); }
   .frame-wrap img { width: 100%; display: block; }
-  .frame-wrap .overlay {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    pointer-events: none;
-  }
+  .frame-wrap .overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .frame-wrap .overlay.hidden { display: none; }
-  figcaption label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
   figcaption {
-    display: flex; align-items: center; gap: 12px;
-    margin-top: 8px; color: var(--muted); font-size: 12px;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px;
+    margin-top: 10px; color: var(--muted); font-size: 12px;
   }
+  figcaption > span, figcaption label { white-space: nowrap; }
+  figcaption label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  figcaption .key-hint { margin-left: auto; }
+
+  /* Controls */
   button {
-    background: var(--surface2); color: var(--text); border: 1px solid var(--line);
-    border-radius: 4px; padding: 4px 11px; cursor: pointer; font: inherit;
+    background: var(--panel); color: var(--text); border: 1px solid var(--border2);
+    border-radius: 6px; padding: 5px 11px; cursor: pointer; font: inherit; font-size: 13px;
+    line-height: 18px;
   }
-  button:disabled { opacity: .4; cursor: default; }
-  table { border-collapse: collapse; width: 100%; max-width: 900px; margin-bottom: 18px; }
-  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
-  th { color: var(--muted); font-weight: 500; font-size: 12px; }
-  td.flag { font-weight: 600; }
-  td.flag.normal { color: var(--normal); }
-  td.flag.watch { color: var(--watch); }
-  td.flag.critical { color: var(--critical); }
-  td.flag.not_assessed { color: var(--unassessed); }
+  button:hover { background: var(--hover); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 500; }
+  button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button:disabled { opacity: .45; cursor: default; }
+  select, input[type="text"], textarea {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border2);
+    border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px;
+  }
+  code { background: var(--hover); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+
+  /* Tables */
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tr:last-child > td { border-bottom: 0; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; white-space: nowrap; background: var(--subtle); }
+  .card-body table th, .card-body table td { padding: 8px 10px; }
   .metrics { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-  .review-cell { min-width: 220px; }
-  .review { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-  .review select, .review input[type="text"] {
-    background: var(--surface2); color: var(--text); border: 1px solid var(--line);
-    border-radius: 4px; padding: 3px 6px; font: inherit; font-size: 12px;
+  .badge {
+    display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500;
+    line-height: 20px; white-space: nowrap;
   }
-  .review input[type="text"] { flex: 1; min-width: 90px; }
-  .review-status { width: 100%; color: var(--muted); font-size: 11px; }
+  /* Sentence case for stored lower-case values: "Not assessed", "Quality of curve". */
+  .badge::first-letter, .code-name::first-letter { text-transform: uppercase; }
+  /* Fixed columns so name, code and flag line up across every row. */
+  .code-row {
+    display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; align-items: center;
+    gap: 6px 10px; padding: 12px 16px; border-bottom: 1px solid var(--line);
+  }
+  .code-row:last-child { border-bottom: 0; }
+  .code-name { font-weight: 600; }
+  .code-sub, .code-row .review { grid-column: 2 / -1; }
+  .code-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .code-foot .review-status { margin-right: auto; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+  .code-foot button { font-size: 12px; padding: 3px 10px; }
+  .confirmed { color: var(--normal); font-weight: 500; }
+  /* The iRAP code is what a reviewer checks: number in a chip, label in full ink. */
+  .irap-code { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; }
+  .irap-code .num {
+    min-width: 22px; height: 22px; display: inline-grid; place-items: center; border-radius: 6px;
+    border: 1px solid var(--border2); background: var(--subtle); font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+  .irap-code.small { font-size: 12px; font-weight: 400; }
+  .irap-code.small .num { min-width: 18px; height: 18px; border-radius: 4px; }
+  .irap-code.none { color: var(--muted); font-weight: 400; }
+  .badge.normal { background: var(--normal-bg); color: var(--normal); }
+  .badge.critical { background: var(--critical-bg); color: var(--critical); }
+  .badge.watch { background: var(--watch-bg); color: var(--watch); }
+  .badge.not_assessed { background: var(--unassessed-bg); color: var(--unassessed); }
+  .review { display: grid; grid-template-columns: 180px minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+  .review[hidden] { display: none; }
+  .review select, .review input[type="text"] { font-size: 12px; padding: 4px 8px; min-width: 0; }
+  .review button { font-size: 12px; padding: 4px 10px; }
+  .review-status { color: var(--muted); font-size: 11px; }
+  .details-open { padding: 3px 10px; font-size: 12px; white-space: nowrap; }
+
+  /* Recommendations */
   .rec {
-    border-left: 3px solid var(--critical); background: var(--rec-bg);
-    padding: 10px 14px; margin-bottom: 10px; max-width: 900px; border-radius: 0 4px 4px 0;
+    border: 1px solid var(--line); background: var(--subtle); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 10px;
   }
-  .rec .rule { font-weight: 600; }
-  .rec .text { margin-top: 4px; line-height: 1.5; }
-  h2 { font-size: 13px; color: var(--muted); font-weight: 500;
-       text-transform: uppercase; letter-spacing: .04em; margin: 22px 0 8px; }
-  code { background: var(--surface2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
-  .details-open { padding: 1px 8px; font-size: 12px; white-space: nowrap; }
+  .rec .rule { font-weight: 600; font-size: 13px; }
+  .rec .text { margin-top: 4px; line-height: 1.55; font-size: 13px; }
+  .rec.reviewed { border-color: var(--gap-line); background: var(--gap-bg); }
+  .rec.reviewed .rule { color: var(--gap); }
+  .rec.reviewed .text { white-space: pre-wrap; }
+  .rec-generated { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+  .rec-edit summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+  .rec-edit textarea { display: block; width: 100%; min-height: 96px; margin: 8px 0; line-height: 1.5; }
+  h2 { font-size: 13px; font-weight: 600; margin: 0; }
+
+  /* Dialogs */
   #details, #config {
     width: min(1200px, 94vw); max-height: 92vh; padding: 0;
-    border: 1px solid var(--line); border-radius: 10px;
+    border: 1px solid var(--line); border-radius: 12px;
     background: var(--panel); color: var(--text);
+    box-shadow: 0 24px 60px rgba(15, 23, 42, .25);
   }
   #config { width: min(860px, 94vw); }
-  #details::backdrop, #config::backdrop { background: rgb(0 0 0 / .55); }
+  #details::backdrop, #config::backdrop { background: rgb(15 23 42 / .45); }
   #details > header, #config > header {
     position: sticky; top: 0; z-index: 2; background: var(--panel);
-    padding: 12px 16px; border-bottom: 1px solid var(--line); gap: 6px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); gap: 6px; align-items: center;
   }
-  #details h3, #config h3 { margin: 0; font-size: 15px; margin-right: auto; }
-  #details .body, #config .body { padding: 6px 16px 16px; }
+  #details h2, #config h2 { margin: 0 auto 0 0; font-size: 15px; font-weight: 600; }
+  #details .body, #config .body { padding: 8px 16px 16px; }
   #config-note { max-width: 780px; }
   #config-error { color: var(--critical); white-space: pre-wrap; font-size: 12px; }
   #config-table { font-size: 12px; font-variant-numeric: tabular-nums; }
-  #config-table td, #config-table th { padding: 4px 10px; }
-  #config-table th.section { color: var(--text); font-size: 13px; padding-top: 14px; }
-  #config-table input {
-    width: 160px; background: var(--surface2); color: var(--text);
-    border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; font: inherit;
-  }
+  #config-table td, #config-table th { padding: 5px 10px; }
+  #config-table th.section { color: var(--text); font-size: 13px; padding-top: 14px; background: none; }
+  #config-table input { width: 160px; font-size: 12px; padding: 3px 6px; }
   #config-table input.changed { border-color: var(--watch); }
   #config-table .viewer { color: var(--watch); }
   #details .chart-title { color: var(--muted); font-size: 12px; margin: 14px 0 0; }
@@ -205,7 +338,7 @@
   #details-summary .normal { color: var(--normal); }
   #details-samples { margin-top: 14px; }
   #details-samples summary { cursor: pointer; color: var(--muted); font-size: 12px; }
-  #details-samples table { font-size: 12px; font-variant-numeric: tabular-nums; max-width: none; margin-top: 6px; }
+  #details-samples table { font-size: 12px; font-variant-numeric: tabular-nums; margin-top: 6px; }
   #details-samples td, #details-samples th { padding: 3px 10px; }
   #details-samples tr.gated td { color: var(--unassessed); }
   #details-samples tr.deciding td { color: var(--critical); font-weight: 600; }
@@ -235,30 +368,33 @@
     </button>
   </header>
   <div id="coverage"></div>
-  <div id="segment-filters">
-    <button class="chip critical" data-filter="critical">Critical</button>
-    <button class="chip gap" data-filter="gap">Gap</button>
-    <button class="chip uncovered" data-filter="uncovered">Not assessed</button>
-    <span id="filter-status"></span>
+  <div id="filter-bar">
+    <div id="filter-row">
+      <button id="filter-toggle" aria-expanded="false" aria-controls="filter-panel">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+        </svg>
+        Filters <span class="badge"></span>
+      </button>
+      <span id="filter-status"></span>
+    </div>
+    <div id="filter-tokens"></div>
+    <div id="filter-panel" hidden></div>
   </div>
   <div id="segments"></div>
-  <div id="map">
-    <div id="map-grip" title="Drag to resize map">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
-           stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="15 3 21 3 21 9"></polyline>
-        <polyline points="9 21 3 21 3 15"></polyline>
-        <line x1="21" y1="3" x2="14" y2="10"></line>
-        <line x1="3" y1="21" x2="10" y2="14"></line>
-      </svg>
-    </div>
-  </div>
 </aside>
-<main><div class="empty" id="main-empty">Select a segment.</div></main>
+<main>
+  <div id="detail"><div class="empty" id="main-empty">Select a segment.</div></div>
+  <section id="map-card" class="card">
+    <div class="card-head"><h2>Route map</h2><span class="sub">Click a segment to open it</span></div>
+    <div id="map"></div>
+  </section>
+</main>
 </div>
 <dialog id="details">
   <header>
-    <h3 id="details-title"></h3>
+    <h2 id="details-title"></h2>
     <button id="details-prev" title="Previous segment">&larr;</button>
     <button id="details-next" title="Next segment">&rarr;</button>
     <button id="details-close" aria-label="Close">&times;</button>
@@ -277,7 +413,7 @@
 
 <dialog id="config">
   <header>
-    <h3>Thresholds</h3>
+    <h2>Thresholds</h2>
     <button id="config-apply" hidden>Apply and re-run</button>
     <button id="config-close" aria-label="Close">&times;</button>
   </header>
@@ -293,8 +429,8 @@
 <script>
 const MODULES = ["curvature", "grade", "delineation", "condition"];
 const FLAG_COLOR = {
-  normal: "#3fb950", watch: "#d29922",
-  critical: "#f85149", not_assessed: "#6e7681",
+  normal: "#16a34a", watch: "#d97706",
+  critical: "#dc2626", not_assessed: "#9ca3af",
 };
 
 const THEME_KEY = "irap-view-theme";
@@ -320,7 +456,7 @@ function applyTheme(theme) {
 function setupThemeToggle() {
   const stored = localStorage.getItem(THEME_KEY);
   const preferred = stored
-    || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    || "light";
   applyTheme(preferred);
   document.getElementById("theme-toggle").addEventListener("click", () => {
     applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
@@ -349,14 +485,30 @@ function routePrefix() {
   return currentRoute ? `${currentRoute}/` : "";
 }
 
-// The worst flag across the modules is what the list dot shows: a segment is as
-// bad as its worst attribute, which is how iRAP aggregates within a unit.
+// Every attribute with a flag. Quality of curve is derived rather than scored,
+// but a Poor curve is critical, so it colours the segment too.
+const FLAGGED = [...MODULES, "quality_of_curve"];
+
+// The flag the page acts on: the reviewer's where one was saved, else the
+// pipeline's. report.json only ever holds the pipeline's.
+function shownFlag(segment, module) {
+  const review = segment.review && segment.review[module];
+  if (review) return review.flag;
+  return (segment[module] && segment[module].flag) ?? "not_assessed";
+}
+
+function segmentReviewed(segment) {
+  return FLAGGED.some((module) => segment.review && segment.review[module]);
+}
+
+// The worst flag across the attributes is what the list dot shows: a segment is
+// as bad as its worst attribute, which is how iRAP aggregates within a unit.
 const SEVERITY = ["not_assessed", "normal", "watch", "critical"];
 function worstFlag(segment) {
   let worst = "not_assessed";
-  for (const module of MODULES) {
-    const flag = segment[module] && segment[module].flag;
-    if (flag && SEVERITY.indexOf(flag) > SEVERITY.indexOf(worst)) worst = flag;
+  for (const module of FLAGGED) {
+    const flag = shownFlag(segment, module);
+    if (SEVERITY.indexOf(flag) > SEVERITY.indexOf(worst)) worst = flag;
   }
   return worst;
 }
@@ -365,10 +517,8 @@ function worstFlag(segment) {
 // came from as a hover tooltip -- plain text, so it scales to however many
 // modules the pipeline grows to without adding more indicators to the row.
 function flagSummary(segment) {
-  return MODULES.map((module) => {
-    const flag = (segment[module] && segment[module].flag) ?? "not_assessed";
-    return `${module}: ${flagText(flag)}`;
-  }).join(" · ");
+  return FLAGGED.map((module) =>
+    `${module.replace(/_/g, " ")}: ${flagText(shownFlag(segment, module))}`).join(" · ");
 }
 
 // Display text only: the stored flag, and the CSS class built from it, stay
@@ -382,6 +532,8 @@ function flagText(flag) {
 const DEG_PER_RAD = 180 / Math.PI;
 const METRIC_TEXT = {
   radius_m: (v) => `Curve radius ${Math.round(v)} m`,
+  gps_radius_m: (v) => `GPS cross-check ${Math.round(v)} m`,
+  gps_grade_pct: (v) => `GPS altitude cross-check ${v.toFixed(1)}%`,
   yaw_rate_rad_s: (v) => `Turn rate ${(v * DEG_PER_RAD).toFixed(1)}°/s`,
   mean_speed_mps: (v) => `Mean speed ${Math.round(v * 3.6)} km/h`,
   gyro_bias_rad_s: (v) => `Gyro bias ${(v * DEG_PER_RAD).toFixed(2)}°/s`,
@@ -392,7 +544,8 @@ const METRIC_TEXT = {
 };
 // Shown elsewhere (iRAP category column) or folded into one phrase below.
 const UNLISTED_METRICS = new Set(
-  ["irap_category", "detection_rate", "detected_frames", "total_frames"]);
+  ["irap_category", "detection_rate", "detected_frames", "total_frames",
+   "lines_visible", "lines_total", "needs_review"]);
 
 function metricsOf(entry) {
   const parts = Object.entries(entry)
@@ -400,6 +553,12 @@ function metricsOf(entry) {
     .map(([key, value]) => METRIC_TEXT[key]
       ? METRIC_TEXT[key](value)
       : `${key.replace(/_/g, " ")} ${Number(value.toFixed(3))}`);
+  if (entry.lines_total != null) {
+    parts.unshift(`${entry.lines_visible} of ${entry.lines_total} lines visible`);
+  }
+  // Curvature (gyro vs GPS bearing) and grade (accelerometer vs GPS altitude):
+  // the IMU decided the flag, the GPS read the other side of the threshold.
+  if (entry.needs_review) parts.unshift("Needs review: GPS cross-check disagrees");
   if (entry.total_frames != null) {
     parts.push(`Lanes detected in ${entry.detected_frames} of ${entry.total_frames} frames`
              + ` (${Math.round(entry.detection_rate * 100)}%)`);
@@ -424,25 +583,14 @@ const IRAP_GRADE_LABELS = {
 // Delineation has no independent numeric scale like curvature/grade's radius
 // or percentage bands -- its code mirrors the flag one-for-one (see
 // irap_delineation_category in lane.py). "lane marking:" qualifies it down
-// to the part actually measured; iRAP's Delineation also covers hazard
-// warning signs, which this project does not assess.
+// to the part actually measured: following AiRAP, it is determined from road
+// lines/markings/lanes; hazard warning signs are not assessed.
 const IRAP_DELINEATION_LABELS = {
   1: "1 - lane marking: adequate",
   2: "2 - lane marking: poor",
 };
-
-function irapCategoryLabel(module, entry) {
-  if (module === "curvature" && entry.irap_category != null) {
-    return IRAP_CURVATURE_LABELS[entry.irap_category] ?? "-";
-  }
-  if (module === "grade" && entry.irap_category != null) {
-    return IRAP_GRADE_LABELS[entry.irap_category] ?? "-";
-  }
-  if (module === "delineation" && entry.irap_category != null) {
-    return IRAP_DELINEATION_LABELS[entry.irap_category] ?? "-";
-  }
-  return "-";
-}
+// Only a reviewer codes condition; the module itself is not built yet.
+const IRAP_CONDITION_LABELS = { 1: "1 - good", 2: "2 - medium", 3: "3 - poor" };
 
 // generated_at is stored in UTC (report.py's own source of truth); the
 // sidebar shows it in Malaysia time (UTC+8, no DST) since that is where this
@@ -458,20 +606,173 @@ function formatGeneratedAt(iso) {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} UTC+8`;
 }
 
-// Chips are additive (OR): "problems only" usually means critical OR watch
-// OR a missing mitigation, not an intersection of all three at once.
-const activeFilters = new Set();
 
 function segmentHasGap(segment) {
-  return Boolean(segment.recommendations && segment.recommendations.length);
+  return Boolean((segment.recommendations && segment.recommendations.length)
+    || (segment.review && segment.review.recommendation));
 }
 
-function segmentMatchesFilters(segment) {
-  if (activeFilters.size === 0) return true;
-  return activeFilters.has(worstFlag(segment))
-    || (activeFilters.has("gap") && segmentHasGap(segment))
-    || (activeFilters.has("uncovered") && segment.coverage === "uncovered");
+// The category the page shows: the reviewer's where one was saved, else the
+// pipeline's. null where there is none (not assessed, or condition, which the
+// pipeline does not code).
+function shownCategory(segment, module) {
+  const review = segment.review && segment.review[module];
+  if (review) return review.category ?? null;
+  if (module === "quality_of_curve") {
+    return (segment.quality_of_curve && segment.quality_of_curve.code) ?? null;
+  }
+  const entry = segment[module];
+  return entry && entry.flag !== "not_assessed" && entry.irap_category != null
+    ? Number(entry.irap_category) : null;
 }
+
+function codeKey(category) {
+  return category == null ? "na" : String(category);
+}
+
+// Faceted filtering. Options within a facet are ORed (Sharp or Very sharp);
+// facets are ANDed with each other (Sharp curvature and a Poor curve).
+// Attribute facets read the shown category, so a reviewer's code counts.
+const STATUS_OPTIONS = {
+  critical: { label: "Critical", test: (s) => worstFlag(s) === "critical" },
+  gap: { label: "Gap", test: segmentHasGap },
+  // The GPS cross-checks: curvature (gyro vs GPS bearing) and grade
+  // (accelerometer vs GPS altitude). The IMU still decides each flag.
+  gps_disagrees: {
+    label: "GPS disagrees",
+    title: "Needs review: GPS bearing (curvature) or GPS altitude (grade) disagrees on the flag",
+    test: (s) => s.curvature?.needs_review === 1 || s.grade?.needs_review === 1,
+  },
+  uncovered: { label: "Not assessed", test: (s) => s.coverage === "uncovered" },
+  reviewed: { label: "Reviewed", test: segmentReviewed },
+  unreviewed: { label: "Not reviewed", test: (s) => !segmentReviewed(s) },
+};
+// Pill text; the iRAP band (REVIEW_LABELS) is the tooltip.
+const FACET_NAMES = {
+  curvature: { 1: "Straight", 2: "Moderate", 3: "Sharp", 4: "Very sharp" },
+  grade: { 1: "Flat", 4: "Moderate", 5: "Steep" },
+  delineation: { 1: "Adequate", 2: "Poor" },
+  condition: { 1: "Good", 2: "Medium", 3: "Poor" },
+  quality_of_curve: { 1: "Adequate", 2: "Poor", 3: "Not applicable" },
+};
+const FACETS = ["status", ...FLAGGED];
+const facetSelection = Object.fromEntries(FACETS.map((facet) => [facet, new Set()]));
+
+function facetTitle(facet) {
+  return facet === "status" ? "Status" : facet[0].toUpperCase() + facet.slice(1).replace(/_/g, " ");
+}
+
+function facetOptions(facet) {
+  if (facet === "status") {
+    return Object.entries(STATUS_OPTIONS)
+      .map(([key, option]) => ({ key, label: option.label, title: option.title }));
+  }
+  return [
+    ...Object.entries(FACET_NAMES[facet]).map(([code, label]) =>
+      ({ key: code, code, label, title: REVIEW_LABELS[facet][code] })),
+    { key: "na", label: "Not assessed" },
+  ];
+}
+
+function optionMatches(segment, facet, key) {
+  return facet === "status"
+    ? STATUS_OPTIONS[key].test(segment)
+    : codeKey(shownCategory(segment, facet)) === key;
+}
+
+function facetMatches(segment, facet) {
+  const chosen = facetSelection[facet];
+  return chosen.size === 0 || [...chosen].some((key) => optionMatches(segment, facet, key));
+}
+
+function segmentMatchesFilters(segment, except = null) {
+  return FACETS.every((facet) => facet === except || facetMatches(segment, facet));
+}
+
+function filtering() {
+  return FACETS.some((facet) => facetSelection[facet].size > 0);
+}
+
+// An option's count is what ticking it would show given the other facets --
+// its own facet is left out, as options within it are ORed anyway.
+function renderFilterPanel() {
+  document.getElementById("filter-panel").innerHTML = FACETS.map((facet) => {
+    const pool = data.segments.filter((segment) => segmentMatchesFilters(segment, facet));
+    const chosen = facetSelection[facet];
+    return `<section class="facet"><h3>${facetTitle(facet)}`
+      + (chosen.size ? `<small>${chosen.size} selected</small>` : "") + `</h3>`
+      + `<div class="facet-options">`
+      + facetOptions(facet).map((option) => {
+        const n = pool.filter((segment) => optionMatches(segment, facet, option.key)).length;
+        const pressed = chosen.has(option.key);
+        const tone = facet === "status" && ["critical", "gap"].includes(option.key) ? ` ${option.key}` : "";
+        return `<button class="pill${tone}${n ? "" : " zero"}" aria-pressed="${pressed}" `
+          + `data-facet="${facet}" data-key="${option.key}"`
+          + (option.title ? ` title="${attrEscape(option.title)}"` : "") + `>`
+          + (option.code ? `<span class="code">${option.code}</span>` : "")
+          + `${option.label}<span class="n">${n}</span></button>`;
+      }).join("")
+      + `</div></section>`;
+  }).join("");
+}
+
+function renderFilterTokens() {
+  const active = FACETS.filter((facet) => facetSelection[facet].size);
+  const names = (facet) => facetOptions(facet)
+    .filter((option) => facetSelection[facet].has(option.key)).map((option) => option.label);
+  document.getElementById("filter-tokens").innerHTML = active.map((facet) =>
+    `<span class="token" title="${attrEscape(names(facet).join(" or "))}">`
+    + `<span><b>${facetTitle(facet)}:</b> ${names(facet).join(", ")}</span>`
+    + `<button data-facet="${facet}" aria-label="Remove ${facetTitle(facet)} filter">&times;</button></span>`
+  ).join("") + (active.length ? `<button id="filter-clear">Clear all</button>` : "");
+  document.querySelector("#filter-toggle .badge").textContent = active.length || "";
+}
+
+function applyFilters() {
+  renderFilterTokens();
+  if (!document.getElementById("filter-panel").hidden) renderFilterPanel();
+  renderSegmentList();
+}
+
+function setFilterPanel(open) {
+  const panel = document.getElementById("filter-panel");
+  panel.hidden = !open;
+  document.getElementById("filter-toggle").setAttribute("aria-expanded", String(open));
+  if (open) renderFilterPanel();
+}
+
+document.getElementById("filter-toggle").addEventListener("click", () => {
+  setFilterPanel(document.getElementById("filter-panel").hidden);
+});
+
+document.getElementById("filter-panel").addEventListener("click", (event) => {
+  const pill = event.target.closest(".pill");
+  if (!pill) return;
+  const chosen = facetSelection[pill.dataset.facet];
+  if (chosen.has(pill.dataset.key)) chosen.delete(pill.dataset.key); else chosen.add(pill.dataset.key);
+  applyFilters();
+  // The panel was redrawn; keep keyboard focus on the same pill.
+  document.querySelector(
+    `.pill[data-facet="${pill.dataset.facet}"][data-key="${pill.dataset.key}"]`)?.focus();
+});
+
+document.getElementById("filter-tokens").addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button.id === "filter-clear") FACETS.forEach((facet) => facetSelection[facet].clear());
+  else facetSelection[button.dataset.facet].clear();
+  applyFilters();
+});
+
+// Closes on Escape or a click anywhere outside the filter bar.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || document.getElementById("filter-panel").hidden) return;
+  setFilterPanel(false);
+  document.getElementById("filter-toggle").focus();
+});
+document.addEventListener("click", (event) => {
+  if (!event.target.closest("#filter-bar") && event.target.isConnected) setFilterPanel(false);
+});
 
 function renderSegmentList() {
   document.getElementById("segments").innerHTML = data.segments.map((segment, i) => {
@@ -479,9 +780,12 @@ function renderSegmentList() {
     const flag = worstFlag(segment);
     const start = Math.round(segment.start_m), end = Math.round(segment.end_m);
     const hasGap = segmentHasGap(segment);
-    return `<div class="seg${hasGap ? " has-gap" : ""}" data-i="${i}" title="${flagSummary(segment)}">`
+    return `<div class="seg${hasGap ? " has-gap" : ""}${i === selected ? " active" : ""}" `
+         + `data-i="${i}" title="${flagSummary(segment)}">`
          + `<span class="dot ${flag}"></span>`
          + `<span class="id">${segment.segment_id}</span>`
+         + (hasGap ? `<span class="tag gap">Gap</span>` : "")
+         + (segmentReviewed(segment) ? `<span class="tag">Reviewed</span>` : "")
          + `<span class="range">${start}-${end} m</span></div>`;
   }).join("");
 
@@ -490,22 +794,13 @@ function renderSegmentList() {
   });
 
   const status = document.getElementById("filter-status");
-  if (activeFilters.size === 0) {
+  if (!filtering()) {
     status.textContent = "";
   } else {
     const shown = data.segments.filter(segmentMatchesFilters).length;
     status.textContent = `${shown} of ${data.segments.length}`;
   }
 }
-
-document.querySelectorAll("#segment-filters .chip").forEach((chip) => {
-  chip.addEventListener("click", () => {
-    const key = chip.dataset.filter;
-    if (activeFilters.has(key)) activeFilters.delete(key); else activeFilters.add(key);
-    chip.classList.toggle("active");
-    renderSegmentList();
-  });
-});
 
 function renderSidebar() {
   document.getElementById("route").textContent = `Route ${data.route_id}`;
@@ -572,73 +867,136 @@ function attrEscape(value) {
   return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
 
-// Review is only offered where there is something to review: a module the
-// pipeline already scored has a flag, right or wrong, and disputing that
-// belongs to code review, not this per-run annotation layer.
-function reviewCell(segment, module, entry) {
-  if (entry.flag !== "not_assessed") return "-";
+// For reviewer-typed text placed as element content.
+function textEscape(value) {
+  return attrEscape(value).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// A reviewer codes the iRAP category, or Not assessed; review.py derives the
+// flag from it, so the category and the flag can never disagree.
+function reviewCell(segment, module) {
   const review = (segment.review && segment.review[module]) || null;
-  const verdict = review ? review.verdict : "";
-  const note = review ? review.note : "";
-  const status = review
-    ? `<div class="review-status">saved: ${review.verdict === "ok" ? "OK" : "Flag"} &middot; `
-      + `${new Date(review.reviewed_at).toLocaleString()}</div>`
-    : "";
-  return `<div class="review" data-module="${module}">`
-       + `<select class="review-verdict">`
-       + `<option value=""${verdict === "" ? " selected" : ""}>verdict...</option>`
-       + `<option value="ok"${verdict === "ok" ? " selected" : ""}>OK</option>`
-       + `<option value="flag"${verdict === "flag" ? " selected" : ""}>Flag</option>`
+  const chosen = review ? String(review.category ?? "na") : "";
+  const option = (value, label) =>
+    `<option value="${value}"${chosen === value ? " selected" : ""}>${label}</option>`;
+  return `<div class="review" data-module="${module}" hidden>`
+       + `<select class="review-category">`
+       + option("", "iRAP category...")
+       + Object.entries(REVIEW_LABELS[module]).map(([code, label]) => option(code, label)).join("")
+       + option("na", "Not assessed")
        + `</select>`
-       + `<input class="review-note" type="text" placeholder="note" value="${attrEscape(note)}">`
-       + `<button class="review-save">Save</button>`
-       + status
+       + `<input class="review-note" type="text" placeholder="note" `
+       + `value="${attrEscape(review ? review.note : "")}">`
+       + `<button class="review-save primary">Save</button>`
+       + `<button class="review-open">Cancel</button>`
        + `</div>`;
+}
+
+function flagBadge(flag, extra = "") {
+  return `<span class="badge ${flag}${extra}">${flagText(flag)}</span>`;
+}
+
+// "4 - very sharp (<200 m)" or "2 Poor" -> number chip plus label; anything
+// without a leading code ("-", "not assessed") stays muted text.
+function codeChip(label, extra = "") {
+  const match = /^(\d+)\s*-?\s*(.*)$/.exec(label ?? "");
+  if (!match) return `<span class="irap-code none${extra}">${label ?? "-"}</span>`;
+  return `<span class="irap-code${extra}"><span class="num">${match[1]}</span>${match[2]}</span>`;
 }
 
 function moduleRows(segment) {
   return MODULES.map((module) => {
     const entry = segment[module] || {};
     const detail = entry.notes ? entry.notes : metricsOf(entry);
-    return `<tr><td>${module}</td>`
-         + `<td class="flag ${entry.flag}">${flagText(entry.flag)}</td>`
-         + `<td class="metrics">${irapCategoryLabel(module, entry)}</td>`
-         + `<td class="metrics">${detail}</td>`
-         + `<td class="review-cell">${reviewCell(segment, module, entry)}</td>`
-         + `<td>${detailsButton(module)}</td></tr>`;
+    return codeRow(segment, module, module, entry.irap_category ?? null, entry.flag, detail);
   }).join("") + qualityOfCurveRow(segment);
 }
 
 const QUALITY_OF_CURVE_LABELS = { 1: "1 Adequate", 2: "2 Poor", 3: "3 Not applicable" };
+const REVIEW_LABELS = {
+  curvature: IRAP_CURVATURE_LABELS,
+  grade: IRAP_GRADE_LABELS,
+  delineation: IRAP_DELINEATION_LABELS,
+  condition: IRAP_CONDITION_LABELS,
+  quality_of_curve: QUALITY_OF_CURVE_LABELS,
+};
 
-// Derived from curvature, delineation and signs rather than scored, so it has
-// no flag and no review of its own. Older reports lack the field entirely.
+// Derived from curvature, delineation and signs rather than scored, but it
+// carries a flag (Poor is critical) and takes a review like the modules.
+// Older reports lack the field entirely.
 function qualityOfCurveRow(segment) {
   const quality = segment.quality_of_curve;
   if (!quality) return "";
-  return `<tr><td>quality of curve</td><td>-</td>`
-       + `<td class="metrics">${QUALITY_OF_CURVE_LABELS[quality.code] ?? "not assessed"}</td>`
-       + `<td class="metrics">${quality.basis}</td><td></td><td></td></tr>`;
+  return codeRow(segment, "quality_of_curve", "quality of curve",
+    quality.code ?? null, quality.flag, quality.basis);
+}
+
+const MODULE_HINTS = {
+  delineation: "Determined based on recognition of road lines/markings/lanes (AiRAP); hazard warning signs are not assessed.",
+};
+
+// One attribute: the reviewer's code and flag where saved, else the
+// pipeline's. A review that kept the pipeline code reads "Confirmed"; one that
+// changed it keeps the pipeline result on its status line. Confirm saves the
+// pipeline code as is; Review / Edit opens the collapsed form.
+function codeRow(segment, module, name, pipelineCode, pipelineFlag, detail) {
+  const review = (segment.review && segment.review[module]) || null;
+  const label = (code) => code == null ? "Not assessed" : (REVIEW_LABELS[module][code] ?? "-");
+  const systemFlag = pipelineFlag ?? "not_assessed";
+  let status = "";
+  if (review) {
+    const when = new Date(review.reviewed_at).toLocaleString();
+    const note = review.note ? ` · ${textEscape(review.note)}` : "";
+    status = review.category === pipelineCode
+      ? `<span class="confirmed">✓ Confirmed</span><span>${when}${note}</span>`
+      : `<span>Pipeline</span>${codeChip(label(pipelineCode), " small")}${flagBadge(systemFlag)}`
+        + `<span>· Edited ${when}${note}</span>`;
+  }
+  const confirm = !review && pipelineCode != null
+    ? `<button class="review-confirm" data-category="${pipelineCode}">Confirm</button>` : "";
+  return `<div class="code-row" data-module="${module}">`
+       + `<span class="code-name"${MODULE_HINTS[module] ? ` title="${MODULE_HINTS[module]}"` : ""}>${name}</span>`
+       + codeChip(label(review ? review.category : pipelineCode))
+       + flagBadge(review ? review.flag : systemFlag)
+       + `<div class="code-sub metrics">${detail}</div>`
+       + `<div class="code-sub code-foot"><span class="review-status">${status}</span>`
+       + `${detailsButton(module)}${confirm}<button class="review-open">${review ? "Edit" : "Review"}</button></div>`
+       + reviewCell(segment, module)
+       + `</div>`;
 }
 
 // Delegated on document: renderDetail() replaces the whole panel on every
 // save and every segment switch, so a handler bound to the button itself
 // would need rebinding after each render anyway.
 document.addEventListener("click", (event) => {
+  const open = event.target.closest(".review-open");
+  if (open) {
+    const form = open.closest(".code-row").querySelector(".review");
+    form.hidden = !form.hidden;
+    if (!form.hidden) form.querySelector(".review-category").focus();
+    return;
+  }
+  const confirm = event.target.closest(".review-confirm");
+  if (confirm) {
+    saveReview(confirm.closest(".code-row").dataset.module, Number(confirm.dataset.category), "", confirm);
+    return;
+  }
   const button = event.target.closest(".review-save");
   if (!button) return;
-  const segment = data.segments[selected];
   const container = button.closest(".review");
-  const module = container.dataset.module;
-  const verdict = container.querySelector(".review-verdict").value;
-  const note = container.querySelector(".review-note").value;
-  if (!verdict) return;
+  const choice = container.querySelector(".review-category").value;
+  if (!choice) return;
+  saveReview(container.dataset.module, choice === "na" ? null : Number(choice),
+    container.querySelector(".review-note").value, button);
+});
 
+function saveReview(module, category, note, button) {
+  const segment = data.segments[selected];
   button.disabled = true;
   fetch(`${routePrefix()}review`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ segment_id: segment.segment_id, module, verdict, note }),
+    body: JSON.stringify({ segment_id: segment.segment_id, module, category, note }),
   })
     .then((response) => {
       if (!response.ok) throw new Error(`save failed (${response.status})`);
@@ -647,13 +1005,16 @@ document.addEventListener("click", (event) => {
     .then((entry) => {
       segment.review = segment.review || {};
       segment.review[module] = entry;
+      // The reviewed flag recolours the list dot and the map line.
+      renderSegmentList();
+      if (layers[selected]) layers[selected].setStyle({ color: FLAG_COLOR[worstFlag(segment)] });
       renderDetail();
     })
     .catch((error) => {
       button.disabled = false;
       alert(`Could not save review: ${error.message}`);
     });
-});
+}
 
 function doubleLineText(dl) {
   // The scan only runs on a critical-grade segment (gap-check's only use of
@@ -679,7 +1040,7 @@ function signsBlock(segment) {
        + `</table>`;
 }
 
-function recommendationsBlock(segment) {
+function generatedRecommendations(segment) {
   if (!segment.recommendations || !segment.recommendations.length) {
     return `<p class="metrics">No gap found: every matching mitigation is present.</p>`;
   }
@@ -687,6 +1048,59 @@ function recommendationsBlock(segment) {
     `<div class="rec"><div class="rule">${RULE_TITLE[rec.rule] ?? rec.rule}</div>`
   + `<div class="text">${recommendationText(rec)}</div></div>`).join("");
 }
+
+// A reviewer's text replaces the generated recommendations on this page only;
+// report.json keeps gap-check's own, which stay one click away beneath it.
+function recommendationsBlock(segment) {
+  const edit = segment.review && segment.review.recommendation;
+  const generatedPlain = (segment.recommendations || []).map(recommendationText).join("\n\n");
+  const shown = edit
+    ? `<div class="rec reviewed"><div class="rule">Reviewer's recommendation</div>`
+      + `<div class="text">${textEscape(edit.text)}</div>`
+      + `<div class="review-status">edited ${new Date(edit.reviewed_at).toLocaleString()}</div></div>`
+      + `<details class="rec-generated"><summary>Generated recommendation</summary>`
+      + `${generatedRecommendations(segment)}</details>`
+    : generatedRecommendations(segment);
+  return shown
+    + `<details class="rec-edit"><summary>Edit recommendation</summary>`
+    + `<textarea id="rec-text">${textEscape(edit ? edit.text : generatedPlain)}</textarea>`
+    + `<button id="rec-save" class="primary">Save</button> `
+    + (edit ? `<button id="rec-reset">Restore generated</button>` : "")
+    + `</details>`;
+}
+
+function saveRecommendation(text, button) {
+  const segment = data.segments[selected];
+  button.disabled = true;
+  fetch(`${routePrefix()}review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ segment_id: segment.segment_id, module: "recommendation", text }),
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error(`save failed (${response.status})`);
+      return response.json();
+    })
+    .then((entry) => {
+      segment.review = segment.review || {};
+      if (entry) segment.review.recommendation = entry;
+      else delete segment.review.recommendation;
+      renderSegmentList();
+      renderDetail();
+    })
+    .catch((error) => {
+      button.disabled = false;
+      alert(`Could not save recommendation: ${error.message}`);
+    });
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target.id === "rec-save") {
+    saveRecommendation(document.getElementById("rec-text").value, event.target);
+  } else if (event.target.id === "rec-reset") {
+    saveRecommendation("", event.target);
+  }
+});
 
 // Display only: the sentences are built from each recommendation's structured
 // fields, worded no more strongly than gapcheck.py's rules check. A rule this
@@ -824,9 +1238,17 @@ function showFrame() {
   image.src = routePrefix() + data.frames[frameId];
   image.alt = frameId;
   document.getElementById("frame-caption").innerHTML =
-    `<code>${frameId}</code> · frame ${frameIndex + 1} of ${frames.length}`;
+    `<code>${frameId}</code> · frame ${frameIndex + 1} of ${frames.length}` + frameAt(frameIndex);
   document.getElementById("prev").disabled = frameIndex === 0;
   document.getElementById("next").disabled = frameIndex >= frames.length - 1;
+}
+
+// Where along the route the photo was taken, estimated from its timestamp.
+function frameAt(index) {
+  const segment = data.segments[selected];
+  const at = (segment.frame_m || [])[index];
+  if (at == null) return "";
+  return ` · at ${Math.round(at)} m (${Math.round(at - segment.start_m)} m into segment)`;
 }
 
 function step(delta) {
@@ -837,11 +1259,30 @@ function step(delta) {
   showFrame();
 }
 
+// The Leaflet map lives in one persistent element. renderDetail() places it in
+// the left column; it is parked back in <main> before #detail is rewritten so
+// the rewrite never destroys it.
+function parkMap() {
+  document.querySelector("main").appendChild(document.getElementById("map-card"));
+}
+
 function renderDetail() {
   const segment = data.segments[selected];
   const frames = segment.frame_ids || [];
-  document.querySelector("main").innerHTML = `
-    <h2>Evidence</h2>
+  const worst = worstFlag(segment);
+  parkMap();
+  document.getElementById("detail").innerHTML = `
+    <div class="seg-head">
+      <h2 class="seg-title">${segment.segment_id}</h2>
+      <span class="seg-range">${Math.round(segment.start_m)}-${Math.round(segment.end_m)} m</span>
+      ${flagBadge(worst)}
+      ${segmentReviewed(segment) ? `<span class="tag">Reviewed</span>` : ""}
+      <span class="seg-pos">Segment ${selected + 1} of ${data.segments.length}</span>
+    </div>
+    <div class="col col-left">
+    <section class="card evidence">
+    <div class="card-head"><h2>Evidence</h2></div>
+    <div class="card-body">
     ${frames.length
       ? `<figure>
            <div class="frame-wrap">
@@ -853,18 +1294,31 @@ function renderDetail() {
              <button id="next">&rarr;</button>
              <span id="frame-caption"></span>
              <span>green = lane points, amber = signs</span>
+             <span class="key-hint">&larr; &rarr; frames &middot; &uarr; &darr; segments</span>
              <label><input type="checkbox" id="overlay-toggle"> show markers</label>
            </figcaption>
          </figure>`
       : `<p class="metrics">No frames fall within this segment.</p>`}
-    <h2>${segment.segment_id} · ${Math.round(segment.start_m)}-${Math.round(segment.end_m)} m</h2>
-    <table><tr><th>module</th><th>flag</th><th>iRAP category</th><th>metrics</th><th>review</th><th>evidence</th></tr>
-      ${moduleRows(segment)}</table>
-    <h2>Signs and markings</h2>
-    ${signsBlock(segment)}
-    <h2>Recommendations</h2>
-    ${recommendationsBlock(segment)}
+    </div>
+    </section>
+    <div id="map-slot"></div>
+    <section class="card signs">
+    <div class="card-head"><h2>Signs and markings</h2></div>
+    <div class="card-body">${signsBlock(segment)}</div>
+    </section>
+    </div>
+    <div class="col col-right">
+    <section class="card coding">
+    <div class="card-head"><h2>iRAP coding</h2><span class="sub">Pipeline result, with the reviewer's code where saved</span></div>
+    ${moduleRows(segment)}
+    </section>
+    <section class="card recs">
+    <div class="card-head"><h2>Recommendations</h2></div>
+    <div class="card-body">${recommendationsBlock(segment)}</div>
+    </section>
+    </div>
   `;
+  document.getElementById("map-slot").replaceWith(document.getElementById("map-card"));
   if (frames.length) {
     document.getElementById("prev").addEventListener("click", () => step(-1));
     document.getElementById("next").addEventListener("click", () => step(1));
@@ -893,45 +1347,10 @@ function select(index) {
   renderDetail();
 }
 
-// One grip in the map's top-right corner drives both dimensions: sidebar
-// width grows from its left edge (fixed at the window edge), map height
-// grows from its bottom edge (fixed at the bottom of the sidebar). Moving
-// the mouse along only one axis leaves the other dimension unchanged, so a
-// straight drag resizes just width or just height, and a diagonal drag
-// resizes both. Leaflet caches its container size, so nudge it after each
-// change or the tiles misalign.
-function setupResizeHandles() {
-  const sidebar = document.querySelector("aside");
-  const mapEl = document.getElementById("map");
-  const grip = document.getElementById("map-grip");
-  let dragging = false;
-
-  function onMove(event) {
-    if (!dragging) return;
-    const width = Math.min(Math.max(event.clientX, 260), window.innerWidth - 320);
-    const height = Math.min(Math.max(sidebar.getBoundingClientRect().bottom - event.clientY, 120), 600);
-    sidebar.style.width = `${width}px`;
-    mapEl.style.height = `${height}px`;
-    if (map) map.invalidateSize();
-  }
-
-  function onUp() {
-    if (!dragging) return;
-    dragging = false;
-    grip.classList.remove("active");
-    document.body.style.cursor = "";
-  }
-
-  grip.addEventListener("mousedown", (event) => {
-    dragging = true;
-    grip.classList.add("active");
-    document.body.style.cursor = "nesw-resize";
-    event.preventDefault();
-    event.stopPropagation();
-  });
-  document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", onUp);
-}
+// The map card follows the frame card's height and the window width, and
+// Leaflet caches its container size, so nudge it whenever the box changes.
+new ResizeObserver(() => { if (map) map.invalidateSize(); })
+  .observe(document.getElementById("map"));
 
 // Curvature and grade details: the chain from IMU samples to the segment's
 // flag, built from the per-sample series export.py writes (build_profile) with
@@ -978,14 +1397,16 @@ function radiusLabel(k) {
   return k === 0 ? "straight" : `R ${Math.round(1000 / k)} m`;
 }
 
-// The sample that set the flag: the smallest radius within the segment, as
-// analyse_curvature takes it (first occurrence on a tie, as numpy's argmin).
+// The sample that set the flag: the smallest radius among windows lying wholly
+// inside the segment, as analyse_curvature takes it (first occurrence on a
+// tie, as numpy's argmin).
 function decidingSample() {
   const segment = data.segments[selected];
   const { dist_m: dist, radius_m: radius } = data.profile;
+  const half = data.config.curvature.window_m / 2;
   let best = -1;
   for (let i = 0; i < dist.length; i++) {
-    if (dist[i] < segment.start_m || dist[i] >= segment.end_m || radius[i] == null) continue;
+    if (dist[i] - half < segment.start_m || dist[i] + half > segment.end_m || radius[i] == null) continue;
     if (best < 0 || radius[i] < radius[best]) best = i;
   }
   return best;
@@ -998,20 +1419,22 @@ function summaryHtml(entry, i) {
   }
   const p = data.profile;
   const bias = entry.gyro_bias_rad_s ?? 0;
-  const yaw = Math.abs(p.yaw_rate_rad_s[i] - bias);
+  const turnDeg = t.window_m / entry.radius_m * 180 / Math.PI;
   const verdict = entry.flag === "critical"
     ? `<b class="critical">Critical:</b> the tightest radius, ${Math.round(entry.radius_m)} m, is below the ${t.threshold_m} m threshold.`
     : `<b class="normal">Normal:</b> the tightest radius, ${Math.round(entry.radius_m)} m, is at or above the ${t.threshold_m} m threshold.`;
   return `<p>${verdict}</p>`
     + `<p class="calc">At ${Math.round(p.dist_m[i])} m (t = ${p.time_s[i].toFixed(1)} s): `
-    + `radius = speed ÷ |yaw rate| = ${p.speed_mps[i].toFixed(2)} m/s ÷ ${yaw.toFixed(4)} rad/s `
-    + `= ${Math.round(entry.radius_m)} m.<br>`
+    + `radius = road length ÷ heading change over the ${t.window_m} m of road centred here, `
+    + `the sharpest ${t.window_m} m lying wholly inside this segment `
+    + `= ${t.window_m} m ÷ ${turnDeg.toFixed(1)}° = ${Math.round(entry.radius_m)} m.<br>`
+    + `Heading is the gyro z reading integrated over time. A window of road, not a single `
+    + `sample, because gyro noise and steering corrections are not road geometry. `
     // estimate_gyro_bias returns exactly 0 when the route has no stationary window.
     + (bias === 0
-      ? `Yaw rate is the raw gyro z reading, uncorrected: the route has no stationary `
-        + `window to estimate the gyro bias from. `
-      : `Yaw rate is the raw gyro z reading ${p.yaw_rate_rad_s[i].toFixed(4)} rad/s minus the gyro bias `
-        + `${bias.toFixed(4)} rad/s, estimated once for the route from stationary samples. `)
+      ? `The gyro is uncorrected: the route has no stationary window to estimate its bias from. `
+      : `The gyro bias, ${bias.toFixed(4)} rad/s, estimated once for the route from stationary `
+        + `samples, is removed first. `)
     + `Samples below ${t.v_min_mps} m/s (${Math.round(t.v_min_mps * 3.6)} km/h) are left out: `
     + `radius is undefined as speed approaches zero.</p>`;
 }
@@ -1213,8 +1636,8 @@ function renderCurvatureDetails(segment, pick, dist) {
 }
 
 // Grade details: pitch from the accelerometer (with the vehicle's own
-// acceleration removed) fused with the gyro, then the steepest grade held for
-// a tenth of the segment. The window and the deciding sample come from
+// acceleration removed) averaged over window_m of road, then the steepest grade
+// held for a tenth of the segment. The window and the deciding sample come from
 // export.py (grade_windows), which runs analyse_grade's own search.
 function gradeSummaryHtml(segment, entry) {
   const t = data.config.grade, w = segment.grade_window;
@@ -1223,7 +1646,6 @@ function gradeSummaryHtml(segment, entry) {
   }
   const p = data.profile, i = w.index, g = entry.grade_pct;
   const minLength = data.config.segment.length_m / 10;
-  const alpha = t.comp_filter_alpha;
   const verdict = entry.flag === "critical"
     ? `<b class="critical">Critical:</b> the steepest grade held for ${minLength} m, ${g.toFixed(1)}%, is at or beyond the ±${t.threshold_pct}% threshold.`
     : `<b class="normal">Normal:</b> the steepest grade held for ${minLength} m, ${g.toFixed(1)}%, is within the ±${t.threshold_pct}% threshold.`;
@@ -1235,8 +1657,9 @@ function gradeSummaryHtml(segment, entry) {
       : `From ${w.start_m} m to ${w.end_m} m (tinted) the grade stays at ${Math.abs(g).toFixed(2)}% or steeper: `
         + `the steepest gradient at least ${minLength} m long, as the iRAP Coding Manual records it, `
         + `so a shorter spike (a speed bump, a culvert) does not set the grade.<br>`)
-    + `Pitch is a complementary filter: ${alpha} × (previous pitch + gyro pitch rate × dt) `
-    + `+ ${(1 - alpha).toFixed(2)} × the accelerometer's pitch. The accelerometer reads the vehicle's own `
+    + `Pitch is the accelerometer's pitch averaged over the ${t.window_m} m of road centred here, `
+    + `which averages out vibration; only windows lying wholly inside this segment count. `
+    + `The accelerometer reads the vehicle's own `
     + `acceleration in the same channel as the slope, so it is removed first, taken from the change in `
     + `recorded speed: here ${p.long_accel_mps2[i].toFixed(2)} m/s², without which this sample's `
     + `accelerometer pitch would read ${p.pitch_accel_raw_deg[i].toFixed(2)}° instead of `
@@ -1259,7 +1682,7 @@ function renderGradeDetails(segment, pick, dist) {
     detailChart(document.getElementById("chart-a"), [
       { label: "Accelerometer pitch, uncorrected", stroke: faint, width: 1, value: fmt("°", 2) },
       { label: "Accelerometer pitch, acceleration removed", stroke: muted, width: 1, value: fmt("°", 2) },
-      { label: "Fused pitch", stroke: text, width: 1.5, value: fmt("°", 2) },
+      { label: `Pitch, averaged over ${t.window_m} m`, stroke: text, width: 1.5, value: fmt("°", 2) },
     ], { values: (u, ticks) => ticks.map((v) => `${v}°`) }, [{ value: 0, color: faint }], deciding,
     [dist, pick(p.pitch_accel_raw_deg), pick(p.pitch_accel_deg), pick(p.pitch_deg)]),
 
@@ -1293,14 +1716,14 @@ function renderGradeDetails(segment, pick, dist) {
       + `<td>${p.dist_m[k].toFixed(1)}</td><td>${p.time_s[k].toFixed(2)}</td>`
       + `<td>${p.accel_x_mps2[k].toFixed(3)}</td><td>${p.long_accel_mps2[k].toFixed(3)}</td>`
       + `<td>${p.pitch_accel_raw_deg[k].toFixed(2)}</td><td>${p.pitch_accel_deg[k].toFixed(2)}</td>`
-      + `<td>${p.pitch_rate_deg_s[k].toFixed(3)}</td><td>${p.pitch_deg[k].toFixed(2)}</td>`
+      + `<td>${p.pitch_deg[k].toFixed(2)}</td>`
       + `<td>${p.grade_pct[k].toFixed(2)}</td><td>${inWindow ? "yes" : ""}</td></tr>`);
   }
   document.getElementById("details-samples").innerHTML =
     `<summary>Samples in this segment (${rows.length})</summary>`
     + `<table><tr><th>Distance (m)</th><th>Time (s)</th><th>Accel x (m/s²)</th>`
     + `<th>Longitudinal accel (m/s²)</th><th>Accel pitch, uncorrected (°)</th>`
-    + `<th>Accel pitch, corrected (°)</th><th>Gyro pitch rate (°/s)</th><th>Fused pitch (°)</th>`
+    + `<th>Accel pitch, corrected (°)</th><th>Averaged pitch (°)</th>`
     + `<th>Grade (%)</th><th>In ${data.config.segment.length_m / 10} m window</th></tr>`
     + rows.join("") + `</table>`;
 }
@@ -1335,10 +1758,24 @@ detailsDialog.addEventListener("close", () => {
   overviewChart = null;
 });
 
+// Left/right step frames, up/down step through the segments the filters show.
+// Keys typed into a note, a select or the recommendation editor are left alone.
 document.addEventListener("keydown", (event) => {
   if (selected === null || configDialog.open) return;
+  if (event.target.closest("input, select, textarea")) return;
   if (event.key === "ArrowLeft") step(-1);
   if (event.key === "ArrowRight") step(1);
+  if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+    const shown = data.segments.flatMap((segment, i) => (segmentMatchesFilters(segment) ? [i] : []));
+    const at = shown.indexOf(selected);
+    const next = event.key === "ArrowDown"
+      ? shown.find((i) => i > selected) : shown.findLast((i) => i < selected);
+    // At either end of the list, or nothing shown: stay put. A selection the
+    // filters hide jumps to the first segment they do show.
+    if (next === undefined && (at !== -1 || !shown.length)) return;
+    event.preventDefault();
+    select(next ?? shown[0]);
+  }
 });
 
 function parseJsonl(text) {
@@ -1389,8 +1826,14 @@ function loadRoute(routeId) {
     fetch(`${prefix}data.json`).then((response) => response.json()),
     fetchJsonl(`${prefix}detections/lane.jsonl`),
     fetchJsonl(`${prefix}detections/sign.jsonl`),
-  ]).then(([payload, laneMap, signMap]) => {
+    // Saved since data.json was built. Only `irap view`'s server has it.
+    fetch(`${prefix}review`).then((response) => (response.ok ? response.json() : null))
+      .catch(() => null),
+  ]).then(([payload, laneMap, signMap, reviews]) => {
     data = payload;
+    if (reviews) {
+      for (const segment of data.segments) segment.review = reviews[segment.segment_id] ?? {};
+    }
     laneByFrame = laneMap;
     signByFrame = signMap;
     selected = null;
@@ -1400,7 +1843,8 @@ function loadRoute(routeId) {
     if (data.segments.length) {
       select(0);
     } else {
-      document.querySelector("main").innerHTML =
+      parkMap();
+      document.getElementById("detail").innerHTML =
         '<div class="empty" id="main-empty">Select a segment.</div>';
     }
   });
@@ -1491,6 +1935,14 @@ const configError = document.getElementById("config-error");
 const CONFIG_NOTES = {
   "lane.clrernet_conf": "Lowering it below the floor of the cached lane dump has no effect.",
   "segment.length_m": "Also sets grade's sustained window, a tenth of this.",
+  "curvature.window_m": "Radius is this much road over its heading change; a segment is "
+    + "coded by the sharpest such window lying wholly inside it. Shorter catches short "
+    + "curves but lets more gyro noise through.",
+  "grade.gps_max_step_pct": "GPS-altitude cross-check only: a climb between consecutive "
+    + "fixes steeper than this is treated as a receiver jump and dropped.",
+  "grade.window_m": "Accelerometer pitch is averaged over this much road; only windows "
+    + "lying wholly inside a segment code it. Shorter keeps short steep pitches but lets "
+    + "more vibration through.",
 };
 
 function flattenConfig(tree, prefix = "") {
@@ -1597,7 +2049,6 @@ fetch("routes.json")
     const initial = routeList.length
       ? (routeList.find((route) => route.id === stored) || routeList[0]).id
       : null;
-    setupResizeHandles();
     return loadRoute(initial);
   })
   .catch((error) => {

@@ -10,7 +10,7 @@ from irap_screening.config import load_config
 def test_defaults_load_from_packaged_yaml():
     cfg = load_config()
     assert cfg.segment.length_m == 100
-    assert cfg.curvature.threshold_m == 400
+    assert cfg.curvature.threshold_m == 800
     assert cfg.grade.threshold_pct == 7.5
     assert cfg.lane.clrernet_conf == 0.41
 
