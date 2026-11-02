@@ -5,9 +5,13 @@ segment:
   length_m: 100                  # iRAP coding unit (Star Rating manual)
 
 curvature:
-  threshold_m: 800               # iRAP curvature category 1 boundary: anything
-                                 # sharper than straight/gently curving is critical
-                                 # (trial; was 400, the category 2/3 boundary)
+  threshold_m: 400               # iRAP category 2/3 boundary: sharp and very sharp
+                                 # are critical. JKR 2A/85 2.3.1 signs a curve only
+                                 # when its recommended speed is at or below the
+                                 # limit; iRAP's moderate (400-800 m) is driven at
+                                 # 70-100 km/h, above these rural roads' limits.
+                                 # 800 suits roads limited near 100 km/h
+                                 # (D:/FYP/curvature_review/threshold_bands.md).
   v_min_mps: 5.0                 # below this, curvature is not_assessed
   stationary_speed_mps: 0.5      # vehicle stopped; distinct from v_min_mps, which
                                  # is the floor for curvature being assessable at all

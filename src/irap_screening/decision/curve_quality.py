@@ -17,7 +17,9 @@ behaviour are not observed, so a curve coded Adequate here may still be Poor
 on site.
 
 Each code carries a flag so the attribute colours the segment like a scored
-module: Poor is critical, Adequate and Not applicable are normal.
+module: Poor is critical on a curve the curvature module flags critical, and
+normal on a milder one (a moderate curve is coded as the manual requires, but
+is below curvature.threshold_m). Adequate and Not applicable are normal.
 """
 
 from __future__ import annotations
@@ -106,6 +108,13 @@ def code_quality_of_curve(
                 "code": POOR,
                 "basis": "No advance bend warning sign or chevron markers were detected.",
             }
-    for entry in coded.values():
-        entry["flag"] = _FLAG[entry["code"]].value
+    for sid, entry in coded.items():
+        flag = _FLAG[entry["code"]]
+        if flag is Flag.CRITICAL and curvature[sid].flag is not Flag.CRITICAL:
+            flag = Flag.NORMAL
+            entry["basis"] += (
+                " Not flagged critical: the curve is no sharper than the "
+                f"{cfg.curvature.threshold_m:.0f} m curvature threshold."
+            )
+        entry["flag"] = flag.value
     return coded

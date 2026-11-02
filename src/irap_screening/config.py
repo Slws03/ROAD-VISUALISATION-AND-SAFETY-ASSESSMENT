@@ -32,7 +32,7 @@ class SegmentSettings(_Section):
 
 
 class CurvatureSettings(_Section):
-    threshold_m: PositiveFloat = 800.0
+    threshold_m: PositiveFloat = 400.0
     v_min_mps: PositiveFloat = 5.0
     stationary_speed_mps: PositiveFloat = 0.5
     stationary_accel_var: PositiveFloat = 0.05

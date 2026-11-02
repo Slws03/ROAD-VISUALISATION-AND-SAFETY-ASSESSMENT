@@ -82,11 +82,21 @@ def test_unsigned_curve_is_poor():
 
 def test_only_a_poor_curve_is_flagged_critical():
     segments = _segments()
-    results = _results(segments, category={"R01-0004": 2}, unassessed={"R01-0007"})
+    results = _results(segments, category={"R01-0004": 3}, unassessed={"R01-0007"})
     coded = code_quality_of_curve(segments, results, _existence(segments, ()), CFG)
     assert coded["R01-0004"]["flag"] == "critical"
     assert coded["R01-0000"]["flag"] == "normal"  # straight: not applicable
     assert coded["R01-0007"]["flag"] == "not_assessed"
+
+
+def test_poor_moderate_curve_keeps_its_code_but_is_not_critical():
+    """Manual p.115 wants the code on a moderate curve; curvature.threshold_m = 400 sets the flag."""
+    segments = _segments()
+    coded = code_quality_of_curve(
+        segments, _results(segments, category={"R01-0004": 2}), _existence(segments), CFG
+    )
+    assert coded["R01-0004"]["code"] == 2
+    assert coded["R01-0004"]["flag"] == "normal"
 
 
 def test_advance_sign_alone_is_adequate():

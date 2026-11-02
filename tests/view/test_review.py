@@ -56,7 +56,8 @@ def test_each_category_implies_its_flag(tmp_path: Path):
     flag = lambda module, category: save_review_entry(  # noqa: E731
         tmp_path, "R01-0004", module, category, "")["flag"]
     assert flag("curvature", 1) == "normal"
-    assert flag("curvature", 2) == "critical"  # follows threshold_m = 800
+    assert flag("curvature", 2) == "normal"  # follows threshold_m = 400
+    assert flag("curvature", 3) == "critical"
     assert flag("grade", 4) == "critical"
     assert flag("condition", 2) == "normal"  # Medium: no watch band to map to
     assert flag("quality_of_curve", 3) == "normal"

@@ -351,7 +351,7 @@ def test_config_lists_every_threshold_with_its_source(config_server):
     base, _ = config_server
     code, state, _ = _request(f"{base}/config")
     assert code == 200
-    assert state["values"]["curvature.threshold_m"] == 800
+    assert state["values"]["curvature.threshold_m"] == 400
     assert state["sources"]["curvature.threshold_m"] == "default"
     assert state["sources"]["grade.threshold_pct"] == "cli"
 
