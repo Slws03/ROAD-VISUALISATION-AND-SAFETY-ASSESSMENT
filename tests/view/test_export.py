@@ -238,3 +238,11 @@ def test_grade_window_points_at_the_sample_the_grade_flag_used(tmp_path):
         assert window["start_m"] <= profile["dist_m"][window["index"]] <= window["end_m"]
         if not window["fallback"]:
             assert window["end_m"] - window["start_m"] >= 10.0 - 0.1  # 0.1: rounding
+
+
+def test_the_profile_carries_the_gps_cross_check_series(tmp_path):
+    """One value per sample beside the series they check; null where GPS has none."""
+    out = _export(tmp_path)
+    profile = json.loads((out / "data.json").read_text(encoding="utf-8"))["profile"]
+    for key in ("gps_radius_m", "gps_grade_pct"):
+        assert len(profile[key]) == len(profile["dist_m"])

@@ -22,9 +22,14 @@ from irap_screening.config import Settings
 from irap_screening.io.align import AlignedRoute, align_route
 from irap_screening.io.schema import Segment
 from irap_screening.io.sources.fixture import FixtureSource
-from irap_screening.modules.curvature import estimate_gyro_bias, radius_series
+from irap_screening.modules.curvature import (
+    estimate_gyro_bias,
+    gps_radius_series,
+    radius_series,
+)
 from irap_screening.modules.grade import (
     _accel_pitch,
+    gps_grade_series,
     longitudinal_accel,
     pitch_series,
     inner_samples,
@@ -57,13 +62,20 @@ def build_profile(route: AlignedRoute, cfg: Settings) -> dict[str, list[float | 
     yaw_rate = np.array([s.gz for s in route.imu], dtype=float)  # raw, before bias removal
     ax, ay, az = np.array([[s.ax, s.ay, s.az] for s in route.imu], dtype=float).reshape(-1, 3).T
     a_long = longitudinal_accel(route)
+    # The cross-checks, per sample like the series they check; all null where
+    # the route carries no GPS bearing or altitude.
+    missing = np.full(len(route.imu), np.nan)
+    gps_radius = gps_radius_series(route, cfg)
+    gps_grade = gps_grade_series(route, cfg)
     return {
         "dist_m": _rounded(route.imu_dist_m, 1),
         "time_s": _rounded(times - times[0], 2) if times.size else [],
         "yaw_rate_rad_s": _rounded(yaw_rate, 5),
         "speed_mps": _rounded(route.imu_speed_mps, 2),
         "radius_m": _rounded(radius, 1),
+        "gps_radius_m": _rounded(missing if gps_radius is None else gps_radius, 1),
         "grade_pct": _rounded(grade, 2),
+        "gps_grade_pct": _rounded(missing if gps_grade is None else gps_grade, 2),
         # Grade's chain: the accelerometer's gravity direction before and after
         # removing the vehicle's own acceleration, then fused with the gyro.
         "accel_x_mps2": _rounded(ax, 3),

@@ -332,6 +332,13 @@
   #config-table input.changed { border-color: var(--watch); }
   #config-table .viewer { color: var(--watch); }
   #details .chart-title { color: var(--muted); font-size: 12px; margin: 14px 0 0; }
+  /* uPlot's legend marker is an empty square outlined in the series colour,
+     which reads as an unticked checkbox. Draw it as a line sample instead
+     (dashed for a dashed series); clicking an entry still hides the series. */
+  #details .u-legend .u-marker {
+    width: 18px; height: 0; border-width: 2px 0 0 0 !important;
+    background: none !important; vertical-align: middle;
+  }
   #details-summary p { margin: 6px 0; max-width: 900px; }
   #details-summary .calc { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
   #details-summary .critical { color: var(--critical); }
@@ -1412,6 +1419,17 @@ function decidingSample() {
   return best;
 }
 
+// The GPS cross-check under a flag: what it read and whether it agrees. The
+// IMU decided the flag either way (curvature.py, grade.py).
+function crossCheckHtml(reading, disagrees) {
+  if (reading == null) return "";
+  return `<p class="calc">${reading}: `
+    + (disagrees
+      ? `<b class="critical">disagrees</b> on the flag, so this segment needs review.`
+      : `agrees on the flag.`)
+    + ` The dashed line is the GPS reading.</p>`;
+}
+
 function summaryHtml(entry, i) {
   const t = data.config.curvature;
   if (entry.flag === "not_assessed" || i < 0) {
@@ -1436,7 +1454,11 @@ function summaryHtml(entry, i) {
       : `The gyro bias, ${bias.toFixed(4)} rad/s, estimated once for the route from stationary `
         + `samples, is removed first. `)
     + `Samples below ${t.v_min_mps} m/s (${Math.round(t.v_min_mps * 3.6)} km/h) are left out: `
-    + `radius is undefined as speed approaches zero.</p>`;
+    + `radius is undefined as speed approaches zero.</p>`
+    + crossCheckHtml(entry.gps_radius_m == null ? null
+      : `GPS bearing, through the same ${t.window_m} m windows, reads the sharpest as `
+        + (entry.gps_radius_m >= 1e5 ? "straight" : `${Math.round(entry.gps_radius_m)} m`),
+      entry.needs_review);
 }
 
 // Draws behind the series: the segment shaded, its boundaries, and any
@@ -1587,6 +1609,8 @@ function renderCurvatureDetails(segment, pick, dist) {
   const faint = cssVar("--border2"), critical = cssVar("--critical"), text = cssVar("--text");
 
   const kMax = Math.max(5.5, ...pick(p.radius_m, kappa).filter((v) => v != null)) * 1.1;
+  // Older reports carry no cross-check series; a route without GPS bearing, all nulls.
+  const gpsCurve = (p.gps_radius_m ?? []).some((v) => v != null);
   detailCharts = [
     detailChart(document.getElementById("chart-a"), [
       { label: "Yaw rate, raw", stroke: faint, width: 1, value: (u, v) => (v == null ? "-" : `${v.toFixed(2)}°/s`) },
@@ -1604,6 +1628,8 @@ function renderCurvatureDetails(segment, pick, dist) {
       { label: "Curvature", stroke: text, width: 1.5,
         value: (u, v, s, k) => (k == null ? "-" : v == null ? "below min speed"
           : `${v.toFixed(2)} /km (R ${Math.round(1000 / v)} m)`) },
+      ...(gpsCurve ? [{ label: "GPS bearing", stroke: cssVar("--accent"), width: 1.25, dash: [5, 4],
+        value: (u, v) => (v == null ? "-" : `${v.toFixed(2)} /km (R ${Math.round(1000 / v)} m)`) }] : []),
     ], {
       // Ticks sit on the iRAP radius bands, labelled as radius.
       splits: () => radiusSplits(kMax, 1000 / t.threshold_m),
@@ -1613,7 +1639,7 @@ function renderCurvatureDetails(segment, pick, dist) {
       { value: 1000 / t.threshold_m, color: critical },
       { value: 1000 / 200, color: faint },
     ], deciding,
-    [dist, pick(p.radius_m, kappa)], () => [0, kMax]),
+    [dist, pick(p.radius_m, kappa), ...(gpsCurve ? [pick(p.gps_radius_m, kappa)] : [])], () => [0, kMax]),
   ];
 
   // Samples within the segment itself, the ones the flag was taken over.
@@ -1626,12 +1652,14 @@ function renderCurvatureDetails(segment, pick, dist) {
       + `<td>${deg(p.yaw_rate_rad_s[k]).toFixed(2)}</td><td>${deg(p.yaw_rate_rad_s[k] - bias).toFixed(2)}</td>`
       + `<td>${(p.speed_mps[k] * 3.6).toFixed(1)}</td>`
       + `<td>${used ? (p.radius_m[k] >= 1e5 ? "straight" : Math.round(p.radius_m[k])) : "-"}</td>`
+      + (gpsCurve ? `<td>${p.gps_radius_m[k] == null ? "-" : p.gps_radius_m[k] >= 1e5 ? "straight" : Math.round(p.gps_radius_m[k])}</td>` : "")
       + `<td>${used ? "yes" : "no, below min speed"}</td></tr>`);
   }
   document.getElementById("details-samples").innerHTML =
     `<summary>Samples in this segment (${rows.length})</summary>`
     + `<table><tr><th>Distance (m)</th><th>Time (s)</th><th>Yaw raw (°/s)</th>`
-    + `<th>Yaw, bias removed (°/s)</th><th>Speed (km/h)</th><th>Radius (m)</th><th>Used</th></tr>`
+    + `<th>Yaw, bias removed (°/s)</th><th>Speed (km/h)</th><th>Radius (m)</th>`
+    + (gpsCurve ? `<th>GPS bearing radius (m)</th>` : "") + `<th>Used</th></tr>`
     + rows.join("") + `</table>`;
 }
 
@@ -1663,7 +1691,10 @@ function gradeSummaryHtml(segment, entry) {
     + `acceleration in the same channel as the slope, so it is removed first, taken from the change in `
     + `recorded speed: here ${p.long_accel_mps2[i].toFixed(2)} m/s², without which this sample's `
     + `accelerometer pitch would read ${p.pitch_accel_raw_deg[i].toFixed(2)}° instead of `
-    + `${p.pitch_accel_deg[i].toFixed(2)}°.</p>`;
+    + `${p.pitch_accel_deg[i].toFixed(2)}°.</p>`
+    + crossCheckHtml(entry.gps_grade_pct == null ? null
+      : `GPS altitude, through the same ${t.window_m} m windows, reads the steepest as `
+        + `${entry.gps_grade_pct.toFixed(1)}%`, entry.needs_review);
 }
 
 function renderGradeDetails(segment, pick, dist) {
@@ -1672,6 +1703,7 @@ function renderGradeDetails(segment, pick, dist) {
   const p = data.profile;
   const t = data.config.grade;
   const assessed = entry.flag !== "not_assessed" && w;
+  const gpsGrade = (p.gps_grade_pct ?? []).some((v) => v != null);
   document.getElementById("details-summary").innerHTML = gradeSummaryHtml(segment, entry);
 
   const deciding = assessed ? p.dist_m[w.index] : null;
@@ -1693,6 +1725,8 @@ function renderGradeDetails(segment, pick, dist) {
 
     detailChart(document.getElementById("chart-c"), [
       { label: "Grade", stroke: text, width: 1.5, value: fmt("%", 2) },
+      ...(gpsGrade ? [{ label: "GPS altitude", stroke: cssVar("--accent"), width: 1.25, dash: [5, 4],
+        value: fmt("%", 2) }] : []),
     ], {
       // Labelled at the thresholds: uPlot's own ticks skip them on a short chart.
       splits: () => [-t.threshold_pct, 0, t.threshold_pct],
@@ -1702,7 +1736,7 @@ function renderGradeDetails(segment, pick, dist) {
       { value: 0, color: faint },
       { value: -t.threshold_pct, color: critical },
     ], deciding,
-    [dist, pick(p.grade_pct)],
+    [dist, pick(p.grade_pct), ...(gpsGrade ? [pick(p.gps_grade_pct)] : [])],
     // Keep both thresholds in view, so a flat road reads as flat.
     (u, min, max) => [Math.min(min, -t.threshold_pct * 1.15), Math.max(max, t.threshold_pct * 1.15)],
     band),
@@ -1717,14 +1751,17 @@ function renderGradeDetails(segment, pick, dist) {
       + `<td>${p.accel_x_mps2[k].toFixed(3)}</td><td>${p.long_accel_mps2[k].toFixed(3)}</td>`
       + `<td>${p.pitch_accel_raw_deg[k].toFixed(2)}</td><td>${p.pitch_accel_deg[k].toFixed(2)}</td>`
       + `<td>${p.pitch_deg[k].toFixed(2)}</td>`
-      + `<td>${p.grade_pct[k].toFixed(2)}</td><td>${inWindow ? "yes" : ""}</td></tr>`);
+      + `<td>${p.grade_pct[k].toFixed(2)}</td>`
+      + (gpsGrade ? `<td>${p.gps_grade_pct[k] == null ? "-" : p.gps_grade_pct[k].toFixed(2)}</td>` : "")
+      + `<td>${inWindow ? "yes" : ""}</td></tr>`);
   }
   document.getElementById("details-samples").innerHTML =
     `<summary>Samples in this segment (${rows.length})</summary>`
     + `<table><tr><th>Distance (m)</th><th>Time (s)</th><th>Accel x (m/s²)</th>`
     + `<th>Longitudinal accel (m/s²)</th><th>Accel pitch, uncorrected (°)</th>`
     + `<th>Accel pitch, corrected (°)</th><th>Averaged pitch (°)</th>`
-    + `<th>Grade (%)</th><th>In ${data.config.segment.length_m / 10} m window</th></tr>`
+    + `<th>Grade (%)</th>` + (gpsGrade ? `<th>GPS altitude grade (%)</th>` : "")
+    + `<th>In ${data.config.segment.length_m / 10} m window</th></tr>`
     + rows.join("") + `</table>`;
 }
 
