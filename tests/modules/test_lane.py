@@ -11,7 +11,13 @@ from irap_screening.config import load_config
 from irap_screening.io.align import align_route
 from irap_screening.io.detections import DetectionSet
 from irap_screening.io.schema import DetectionRecord, Flag, LaneInstance, Transform
-from irap_screening.modules.lane import analyse_lane, irap_delineation_category, weber_contrast_at
+from irap_screening.modules.lane import (
+    analyse_lane,
+    frame_contrasts,
+    irap_delineation_category,
+    lane_contrasts,
+    weber_contrast_at,
+)
 from irap_screening.segment import build_segments
 from tests.factories import straight_route
 
@@ -184,6 +190,59 @@ def test_one_faded_line_does_not_condemn_a_generally_visible_segment(tmp_path: P
 def test_mostly_faded_lines_are_critical(tmp_path: Path):
     results = _mixed(tmp_path, lambda index: index != 0)
     assert results[0].flag is Flag.CRITICAL
+
+
+def test_the_viewer_contrasts_are_the_ones_graded(tmp_path: Path):
+    """The labels on the frames must be the numbers the flag came from."""
+    route, segments, detections, cfg = _build(tmp_path, line_level=200)
+    frame_ids = set(segments[0].frame_ids)
+
+    contrasts = lane_contrasts(route, detections, cfg, tmp_path, frame_ids)
+    result = analyse_lane(route, segments, detections, cfg, image_root=tmp_path)[0]
+
+    assert set(contrasts) == set(result.evidence)
+    assert min(contrasts.values()) == pytest.approx(result.metrics["weber_contrast"])
+
+
+def _verge_frame() -> np.ndarray:
+    """Asphalt (100) with dark verge (40) left of x=162; paint (200) at 162-164,
+    320-322 and 478-480. A lane point at x=160 sits on the verge, 2 px off the
+    paint, so most of its full background window is verge."""
+    gray = np.full((480, 640), 100, dtype=np.uint8)
+    gray[:, :162] = 40
+    for x in (162, 320, 478):
+        gray[:, x : x + 3] = 200
+    return gray
+
+
+def _vertical(lane_id: str, x: float) -> LaneInstance:
+    return LaneInstance(id=lane_id, points=[(x, y) for y in (300.0, 350.0, 400.0)], conf=0.9)
+
+
+def test_an_edge_line_takes_its_background_from_the_road_side():
+    """Verge in the window pulled the median down and the contrast up (delineation_review §8)."""
+    cfg = load_config()
+    edge, other = _vertical("edge", 160.0), _vertical("other", 479.0)
+
+    paired = frame_contrasts(_verge_frame(), [edge, other], cfg)
+    alone = frame_contrasts(_verge_frame(), [edge], cfg)
+
+    assert paired["edge"] == pytest.approx(1.0)  # (200 - 100) / 100: road side only
+    assert alone["edge"] == pytest.approx(4.0)  # (200 - 40) / 40: one line, full window
+
+
+def test_a_line_between_two_others_keeps_the_full_window():
+    """Road on both sides; one side alone would be thrown by a vehicle or shadow."""
+    cfg = load_config()
+    gray = _verge_frame()
+    gray[:, 280:320] = 40  # a shadow on the middle line's left only
+    lanes = [_vertical("left", 160.0), _vertical("middle", 321.0), _vertical("right", 479.0)]
+
+    contrasts = frame_contrasts(gray, lanes, cfg)
+
+    assert contrasts["middle"] == pytest.approx(
+        weber_contrast_at(gray, 321.0, 350.0, cfg.lane.bg_window, cfg.lane.peak_window_frac)
+    )
 
 
 def test_segment_without_frames_is_not_assessed(tmp_path: Path):
