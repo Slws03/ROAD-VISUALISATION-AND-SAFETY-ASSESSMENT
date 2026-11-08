@@ -107,6 +107,10 @@ def radius_series(route: AlignedRoute, cfg: Settings, bias: float) -> np.ndarray
         return np.full(len(route.imu), np.nan)
     times = np.array([sample.timestamp_utc.timestamp() for sample in route.imu])
     gz = np.array([sample.gz for sample in route.imu], dtype=float) - bias
+    # A stopped vehicle does not turn, so whatever the gyro reads meanwhile is
+    # drift; integrated it would all land at one point of road. Crawling is left
+    # in: it can be a real turn (curvature_review/stop_yaw.md).
+    gz[route.imu_speed_mps < cfg.curvature.stationary_speed_mps] = 0.0
     heading = np.concatenate([[0.0], np.cumsum(0.5 * (gz[1:] + gz[:-1]) * np.diff(times))])
 
     # Heading as a function of distance needs distance to increase. While

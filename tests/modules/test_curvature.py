@@ -1,13 +1,14 @@
 """Curvature is omega / v. Every test here pins one of its failure modes."""
 
 import math
+from datetime import timedelta
 
 import numpy as np
 import pytest
 
 from irap_screening.config import load_config
 from irap_screening.io.align import align_route
-from irap_screening.io.schema import Flag
+from irap_screening.io.schema import Flag, ImuSample
 from irap_screening.modules.curvature import (
     analyse_curvature,
     estimate_gyro_bias,
@@ -236,3 +237,40 @@ def test_no_gps_bearing_means_no_cross_check():
     results, _ = _analyse(*curved_route(radius_m=312.5, arc_length_m=300.0))
     assert "gps_radius_m" not in results[0].metrics
     assert "needs_review" not in results[0].metrics
+
+
+def test_yaw_read_while_stopped_is_not_a_turn():
+    """A straight road with a minute parked mid-way and the gyro drifting all the while.
+
+    The accelerometer shakes during the stop, as a handled phone does, so the bias
+    estimator declines and the drift stays in the signal.
+    """
+    frames, gps, imu = straight_route(length_m=500.0)
+    middle = gps[len(gps) // 2]
+    stop = timedelta(seconds=60)
+
+    def shifted(items):
+        return [
+            item.model_copy(update={"timestamp_utc": item.timestamp_utc + stop})
+            if item.timestamp_utc > middle.timestamp_utc else item
+            for item in items
+        ]
+
+    parked_gps = [
+        middle.model_copy(update={
+            "timestamp_utc": middle.timestamp_utc + timedelta(seconds=s), "speed_mps": 0.0,
+        })
+        for s in range(1, 60)
+    ]
+    parked_imu = [
+        ImuSample(
+            timestamp_utc=middle.timestamp_utc + timedelta(seconds=s / 10.0),
+            ax=1.0 if s % 2 else -1.0, ay=0.0, az=9.81, gx=0.0, gy=0.0, gz=0.02,
+        )
+        for s in range(10, 590)
+    ]
+    by_time = lambda item: item.timestamp_utc  # noqa: E731
+    gps = sorted(shifted(gps) + parked_gps, key=by_time)
+    imu = sorted(shifted(imu) + parked_imu, key=by_time)
+    results, _ = _analyse(frames, gps, imu)
+    assert all(r.flag is not Flag.CRITICAL for r in results)
