@@ -394,7 +394,7 @@
 <main>
   <div id="detail"><div class="empty" id="main-empty">Select a segment.</div></div>
   <section id="map-card" class="card">
-    <div class="card-head"><h2>Route map</h2><span class="sub">Click a segment to open it</span></div>
+    <div class="card-head"><h2>Route map</h2><span class="sub">Click a segment to open it &middot; dots: its photos, blue = shown (position from timestamp)</span></div>
     <div id="map"></div>
   </section>
 </main>
@@ -481,6 +481,7 @@ let map = null;
 let layers = {};
 let boundaries = [];
 let selectionCasing = null;
+let frameDots = null;
 let laneByFrame = new Map();
 let signByFrame = new Map();
 let routeList = [];
@@ -873,6 +874,7 @@ function renderMap() {
   });
   boundaryMarker(data.segments[data.segments.length - 1].end_latlon);
   selectionCasing = L.polyline([], { color: "#0f1114", weight: 11, interactive: false }).addTo(map);
+  frameDots = L.layerGroup().addTo(map);
   map.fitBounds(L.latLngBounds(points).pad(0.2));
 }
 
@@ -887,6 +889,34 @@ function highlightSelected() {
   selectionCasing.setLatLngs(layers[selected].getLatLngs()).bringToFront();
   layers[selected].bringToFront();
   boundaries.forEach((dot) => dot.bringToFront());
+  drawFrameDots();
+}
+
+// The selected segment's photos, where the timestamp puts them on the GPS
+// track (the same estimate as "at N m" under the frame). The one on screen is
+// blue and larger; clicking a dot shows that photo.
+function drawFrameDots() {
+  if (!frameDots) return;
+  frameDots.clearLayers();
+  const segment = data.segments[selected];
+  const positions = (segment && segment.frame_latlon) || [];
+  positions.forEach((latlon, i) => {
+    const current = i === frameIndex;
+    const dot = L.circleMarker(latlon, {
+      // Blue, unlike the white segment-boundary dots.
+      radius: current ? 7 : 4,
+      color: current ? "#fff" : "#2f81f7",
+      weight: current ? 2 : 1.5,
+      fillColor: current ? "#2f81f7" : "#cfe3ff",
+      fillOpacity: 1,
+    }).addTo(frameDots);
+    dot.bindTooltip(`${segment.frame_ids[i]} · frame ${i + 1} of ${positions.length}`);
+    dot.on("click", () => {
+      frameIndex = i;
+      showFrame();
+    });
+    if (current) dot.bringToFront();
+  });
 }
 
 // Escapes a value for use inside an HTML attribute (the review note round-trips
@@ -1174,6 +1204,7 @@ function recommendationText(rec) {
 }
 
 const LANE_COLOR = "#3fb950";
+const FAINT_LANE_COLOR = "#f85149";
 const SIGN_COLOR = "#d29922";
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -1184,28 +1215,50 @@ function inFrame(x, y, width, height) {
 // Off-frame points are dropped rather than clamped. CLRerNet extends curved
 // lanes past the image edge, and a clamped point would draw a marking along
 // the border that was never detected there.
+// Each line is labelled with the contrast delineation grades it by, at its
+// nearest point, and drawn red when that falls below weber_adequate.
 function drawLanes(svg, record, width, height) {
   const confThreshold = data.config.lane.clrernet_conf;
+  const adequate = data.config.lane.weber_adequate;
+  const contrasts = data.lane_contrast || {};
+  const fontSize = Math.max(14, width / 36);
   for (const instance of record.instances) {
     if (instance.conf < confThreshold) continue;
     const points = instance.points.filter(([x, y]) => inFrame(x, y, width, height));
+    if (!points.length) continue;
+    const contrast = contrasts[instance.id];
+    const color = contrast != null && contrast < adequate ? FAINT_LANE_COLOR : LANE_COLOR;
     if (points.length === 1) {
       const [x, y] = points[0];
       const circle = document.createElementNS(SVG_NS, "circle");
       circle.setAttribute("cx", x);
       circle.setAttribute("cy", y);
       circle.setAttribute("r", 4);
-      circle.setAttribute("fill", LANE_COLOR);
+      circle.setAttribute("fill", color);
       svg.appendChild(circle);
-    } else if (points.length > 1) {
+    } else {
       const polyline = document.createElementNS(SVG_NS, "polyline");
       polyline.setAttribute("points", points.map(([x, y]) => `${x},${y}`).join(" "));
       polyline.setAttribute("fill", "none");
-      polyline.setAttribute("stroke", LANE_COLOR);
+      polyline.setAttribute("stroke", color);
       polyline.setAttribute("stroke-width", 3);
       polyline.setAttribute("vector-effect", "non-scaling-stroke");
       svg.appendChild(polyline);
     }
+    if (contrast == null) continue;
+    const [x, y] = points.reduce((low, point) => (point[1] > low[1] ? point : low));
+    const label = document.createElementNS(SVG_NS, "text");
+    label.setAttribute("x", Math.min(Math.max(x, 1.5 * fontSize), width - 1.5 * fontSize));
+    label.setAttribute("text-anchor", "middle");
+    label.setAttribute("y", Math.max(y - fontSize / 2, fontSize));
+    label.setAttribute("fill", color);
+    label.setAttribute("stroke", "#000");
+    label.setAttribute("stroke-width", Math.max(2, fontSize / 6));
+    label.setAttribute("paint-order", "stroke");
+    label.setAttribute("font-size", fontSize);
+    label.setAttribute("font-weight", "600");
+    label.textContent = contrast.toFixed(2);
+    svg.appendChild(label);
   }
 }
 
@@ -1269,6 +1322,7 @@ function showFrame() {
     `<code>${frameId}</code> · frame ${frameIndex + 1} of ${frames.length}` + frameAt(frameIndex);
   document.getElementById("prev").disabled = frameIndex === 0;
   document.getElementById("next").disabled = frameIndex >= frames.length - 1;
+  drawFrameDots();
 }
 
 // Where along the route the photo was taken, estimated from its timestamp.
@@ -1321,7 +1375,7 @@ function renderDetail() {
              <button id="prev">&larr;</button>
              <button id="next">&rarr;</button>
              <span id="frame-caption"></span>
-             <span>green = lane points, amber = signs</span>
+             <span>green = lane, red = lane below the contrast threshold (label: Weber contrast), amber = signs</span>
              <span class="key-hint">&larr; &rarr; frames &middot; &uarr; &darr; segments</span>
              <label><input type="checkbox" id="overlay-toggle"> show markers</label>
            </figcaption>

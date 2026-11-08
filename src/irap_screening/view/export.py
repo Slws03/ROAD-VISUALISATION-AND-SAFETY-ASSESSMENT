@@ -5,8 +5,9 @@ pipeline and renders the same report, adding only what the report deliberately
 leaves out -- the frames behind each segment, with their detections drawn on.
 
 Detections are drawn in the browser, on the frame at its native resolution,
-so this module's only job is to say where each frame lives. It does not read
-or write a single pixel.
+so this module's job is to say where each frame lives. The one pixel-derived
+number it carries, each line's contrast, comes from the lane module that
+grades with it; nothing is rasterized here.
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ from typing import Any
 import numpy as np
 
 from irap_screening.config import Settings
-from irap_screening.io.align import AlignedRoute, align_route
+from irap_screening.io.align import AlignedRoute, _epoch_seconds, align_route
+from irap_screening.io.detections import load_detection_set
 from irap_screening.io.schema import Segment
 from irap_screening.io.sources.fixture import FixtureSource
 from irap_screening.modules.curvature import (
@@ -35,6 +37,7 @@ from irap_screening.modules.grade import (
     inner_samples,
     sustained_grade_window,
 )
+from irap_screening.modules.lane import lane_contrasts
 from irap_screening.pipeline import run_pipeline
 from irap_screening.segment import build_segments
 from irap_screening.view.review import load_review
@@ -121,6 +124,19 @@ def segment_path(route: AlignedRoute, segment: Segment) -> list[list[float]]:
     return [list(point) for point in (segment.start_latlon, *between, segment.end_latlon)]
 
 
+def frame_latlon(route: AlignedRoute) -> dict[str, list[float]]:
+    """Where each photo was taken, for the map: the GPS track interpolated at
+    the frame's timestamp, as frame_m is. An estimate, not a measurement."""
+    gps_times = _epoch_seconds(route.gps)
+    frame_times = _epoch_seconds(route.frames)
+    lat = np.interp(frame_times, gps_times, [fix.lat for fix in route.gps])
+    lon = np.interp(frame_times, gps_times, [fix.lon for fix in route.gps])
+    return {
+        frame.frame_id: [round(float(a), 7), round(float(b), 7)]
+        for frame, a, b in zip(route.frames, lat, lon, strict=True)
+    }
+
+
 def export_view(
     route_dir: Path,
     cfg: Settings,
@@ -152,6 +168,7 @@ def export_view(
     review_by_segment = load_review(route_dir)
     windows = grade_windows(route, segments, cfg)
     paths = {segment.segment_id: segment_path(route, segment) for segment in segments}
+    latlon_by_id = frame_latlon(route)
 
     data: dict[str, Any] = dict(report)
     data["route_name"] = route_dir.resolve().name
@@ -166,10 +183,18 @@ def export_view(
             "review": review_by_segment.get(segment["segment_id"], {}),
             "grade_window": windows.get(segment["segment_id"]),
             "path_latlon": paths[segment["segment_id"]],
+            "frame_latlon": [
+                latlon_by_id[fid]
+                for fid in frame_ids_by_segment.get(segment["segment_id"], [])
+            ],
         }
         for segment in report["segments"]
     ]
     data["profile"] = build_profile(route, cfg)
+    contrasts = lane_contrasts(
+        route, load_detection_set(route_dir / "detections"), cfg, route_dir, referenced_ids
+    )
+    data["lane_contrast"] = {lane_id: round(c, 3) for lane_id, c in contrasts.items()}
     data["frames"] = {
         frame_id: frames_by_id[frame_id].path
         for frame_id in referenced_ids

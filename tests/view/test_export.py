@@ -40,6 +40,38 @@ def test_writes_the_two_pieces_the_page_needs(tmp_path):
     assert (out / "data.json").exists()
 
 
+def test_every_drawn_lane_carries_its_contrast(tmp_path):
+    """The frame labels read the contrast per lane id, for accepted lanes only."""
+    out = _export(tmp_path)
+    data = json.loads((out / "data.json").read_text(encoding="utf-8"))
+    conf = data["config"]["lane"]["clrernet_conf"]
+    referenced = {fid for segment in data["segments"] for fid in segment["frame_ids"]}
+
+    accepted = set()
+    for line in (FIXTURE / "detections" / "lane.jsonl").read_text(encoding="utf-8").splitlines():
+        record = json.loads(line)
+        if record["frame_id"] in referenced:
+            accepted |= {i["id"] for i in record["instances"] if i["conf"] >= conf}
+
+    assert accepted
+    assert set(data["lane_contrast"]) == accepted
+    assert all(isinstance(value, float) for value in data["lane_contrast"].values())
+
+
+def test_each_frame_has_a_map_position_on_its_segment(tmp_path):
+    """One position per frame, in frame order, lying within the route's GPS extent."""
+    out = _export(tmp_path)
+    data = json.loads((out / "data.json").read_text(encoding="utf-8"))
+    track = [point for segment in data["segments"] for point in segment["path_latlon"]]
+    lats, lons = [p[0] for p in track], [p[1] for p in track]
+
+    for segment in data["segments"]:
+        assert len(segment["frame_latlon"]) == len(segment["frame_ids"])
+        for lat, lon in segment["frame_latlon"]:
+            assert min(lats) <= lat <= max(lats)
+            assert min(lons) <= lon <= max(lons)
+
+
 def test_no_evidence_directory_is_written(tmp_path):
     """Rendering moved to the browser; nothing should be rasterized any more."""
     out = _export(tmp_path)
