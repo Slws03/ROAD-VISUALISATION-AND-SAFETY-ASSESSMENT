@@ -72,10 +72,13 @@ lane:
   peak_window_frac: 0.005        # PROVISIONAL. The marking's peak is sought
                                  # this share of the image width either side
                                  # of each lane point (never under 4 px).
-                                 # CLRerNet's points land 6-10 px off the paint
-                                 # on 1920-wide Neuon frames; a fixed +-4 px
-                                 # missed it and graded clear dashed lines at
-                                 # 0.08-0.14. 0.005 is +-10 px at 1920, +-5 at 960.
+                                 # Tolerates CLRerNet points that sit off the
+                                 # paint. On the Samarahan routes that is rare
+                                 # (over 4 px for 0.3% of lines at 1280 wide, 1.4%
+                                 # at 1920); the window mainly lifts contrast by
+                                 # 0.01-0.03 over +-4 px, enough to move 12 of
+                                 # 266 segments to adequate. 0.005 is +-6 px at
+                                 # 1280, +-10 at 1920. D:/FYP/delineation_review.
 
 doubleline:                      # from the doubleline_coord_scan experiment
   window_steps: [50, 90, 130, 180, 240]

@@ -39,11 +39,11 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 # rows cut, so the model learned roads framed at 1640:320 before the resize.
 TRAIN_ASPECT = 1640 / (590 - 270)
 # Extra rows kept above the CULane-shaped band, as a fraction of frame height.
-# Tuned on the Neuon phone routes (mounted behind the mirror, horizon at
-# 0.60-0.70 of the height): the bare band cut at ~0.65 and often lost the
-# centre line on rural roads; 0.10 more (crop ~0.55) recovered it, with
-# highway unchanged. A camera pitched far from that mount may need its own
-# --crop-top.
+# Checked on the Samarahan phone routes (mounted behind the mirror): the bare
+# band cuts at ~0.65, below the far road, and often lost the left edge line;
+# 0.10 more (crop ~0.55) found both ego lines in 839 of 1118 frames against
+# 769, and crops from 0.45 to 0.60 differ by only a few frames. A camera
+# pitched far from that mount may need its own --crop-top.
 HORIZON_MARGIN = 0.10
 
 
