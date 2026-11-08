@@ -10,14 +10,18 @@ import json
 from pathlib import Path
 
 from irap_screening.config import load_config
+from irap_screening.io.align import align_route
+from irap_screening.segment import build_segments
 from irap_screening.view.export import (
     TEMPLATE,
     add_route,
     discover_routes,
     export_routes,
     export_view,
+    segment_path,
 )
 from irap_screening.view.review import save_review_entry
+from tests.factories import curved_route
 from tests.test_pipeline import _write_route
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "route_demo"
@@ -83,6 +87,7 @@ def test_the_report_travels_intact(tmp_path):
     data = json.loads((out / "data.json").read_text(encoding="utf-8"))
 
     assert data["route_id"] == "R01"
+    assert data["route_name"] == "route_demo"
     assert "coverage" in data
     assert "config" in data
     for segment in data["segments"]:
@@ -176,7 +181,10 @@ def test_export_routes_writes_one_shared_page_and_per_route_data(tmp_path):
 
     assert (out_dir / "index.html").exists()
     routes = json.loads((out_dir / "routes.json").read_text(encoding="utf-8"))
-    assert {r["id"] for r in routes} == {"route_a", "route_b"}
+    assert routes == [
+        {"id": "route_a", "label": "R01-route_a"},
+        {"id": "route_b", "label": "R02-route_b"},
+    ]
     for route_id in ("route_a", "route_b"):
         assert (out_dir / route_id / "data.json").exists()
         # Only the shared page at out_dir is served; a nested one would be dead weight.
@@ -246,3 +254,18 @@ def test_the_profile_carries_the_gps_cross_check_series(tmp_path):
     profile = json.loads((out / "data.json").read_text(encoding="utf-8"))["profile"]
     for key in ("gps_radius_m", "gps_grade_pct"):
         assert len(profile[key]) == len(profile["dist_m"])
+
+
+def test_a_segment_path_follows_the_gps_track_between_its_ends():
+    """A curve drawn from its ends alone cuts the corner on the map."""
+    cfg = load_config()
+    route = align_route(*curved_route(radius_m=312.5, arc_length_m=300.0))
+    segment = build_segments(route, cfg)[0]
+    path = segment_path(route, segment)
+    assert path[0] == list(segment.start_latlon)
+    assert path[-1] == list(segment.end_latlon)
+    assert len(path) > 2
+    # The middle fix lies off the straight line between the ends.
+    (lat0, lon0), (lat1, lon1) = path[0], path[-1]
+    lat, lon = path[len(path) // 2]
+    assert abs((lat1 - lat0) * (lon - lon0) - (lon1 - lon0) * (lat - lat0)) > 1e-10

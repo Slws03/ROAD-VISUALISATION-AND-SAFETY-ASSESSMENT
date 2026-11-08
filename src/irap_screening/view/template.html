@@ -479,6 +479,8 @@ let selected = null;
 let frameIndex = 0;
 let map = null;
 let layers = {};
+let boundaries = [];
+let selectionCasing = null;
 let laneByFrame = new Map();
 let signByFrame = new Map();
 let routeList = [];
@@ -810,7 +812,9 @@ function renderSegmentList() {
 }
 
 function renderSidebar() {
-  document.getElementById("route").textContent = `Route ${data.route_id}`;
+  const listed = routeList.find((route) => route.id === currentRoute);
+  document.getElementById("route").textContent =
+    `Route ${listed ? listed.label : `${data.route_id}-${data.route_name}`}`;
   document.getElementById("generated").textContent =
     `${data.segments.length} segments · ${formatGeneratedAt(data.generated_at)}`;
 
@@ -834,9 +838,12 @@ function renderMap() {
     map = null;
   }
   layers = {};
+  boundaries = [];
   document.getElementById("map").style.display = "";
 
-  const points = data.segments.flatMap((s) => [s.start_latlon, s.end_latlon]);
+  // Older reports carry only the segment's ends.
+  const pathOf = (s) => s.path_latlon ?? [s.start_latlon, s.end_latlon];
+  const points = data.segments.flatMap(pathOf);
   if (!points.length || typeof L === "undefined") {
     // Leaflet comes from a CDN; with no network the map is simply absent and
     // everything else still works.
@@ -849,11 +856,11 @@ function renderMap() {
   // Small white dots at each segment boundary make the 100 m breakpoints
   // visible against the colored route line, which otherwise reads as one
   // continuous strip.
-  const boundaryMarker = (latlon) => L.circleMarker(latlon, {
+  const boundaryMarker = (latlon) => boundaries.push(L.circleMarker(latlon, {
     radius: 4, color: "#0f1114", weight: 1.5, fillColor: "#fff", fillOpacity: 1,
-  }).addTo(map);
+  }).addTo(map));
   data.segments.forEach((segment, i) => {
-    const line = L.polyline([segment.start_latlon, segment.end_latlon], {
+    const line = L.polyline(pathOf(segment), {
       color: FLAG_COLOR[worstFlag(segment)], weight: 5,
     }).addTo(map);
     line.bindTooltip(
@@ -865,7 +872,21 @@ function renderMap() {
     boundaryMarker(segment.start_latlon);
   });
   boundaryMarker(data.segments[data.segments.length - 1].end_latlon);
+  selectionCasing = L.polyline([], { color: "#0f1114", weight: 11, interactive: false }).addTo(map);
   map.fitBounds(L.latLngBounds(points).pad(0.2));
+}
+
+// The selected segment stands out by a dark casing and extra width. The rest stay
+// opaque: a faded red over the map's yellow roads reads as orange, a flag colour
+// that does not exist. Boundary dots stay on top to show where it ends.
+function highlightSelected() {
+  if (!selectionCasing || !layers[selected]) return;
+  Object.entries(layers).forEach(([i, line]) => {
+    line.setStyle({ weight: Number(i) === selected ? 7 : 5 });
+  });
+  selectionCasing.setLatLngs(layers[selected].getLatLngs()).bringToFront();
+  layers[selected].bringToFront();
+  boundaries.forEach((dot) => dot.bringToFront());
 }
 
 // Escapes a value for use inside an HTML attribute (the review note round-trips
@@ -1351,6 +1372,7 @@ function select(index) {
   });
   if (detailsDialog.open && detailCharts.length) renderDetails();
   if (map && layers[index]) map.fitBounds(layers[index].getBounds().pad(1.5));
+  highlightSelected();
   renderDetail();
 }
 

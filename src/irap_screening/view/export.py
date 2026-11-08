@@ -112,6 +112,15 @@ def grade_windows(
     return windows
 
 
+def segment_path(route: AlignedRoute, segment: Segment) -> list[list[float]]:
+    """The GPS track through a segment, for the map: its ends and the fixes between."""
+    inside = (route.gps_dist_m > segment.start_m) & (route.gps_dist_m < segment.end_m)
+    between = [
+        (fix.lat, fix.lon) for fix, keep in zip(route.gps, inside, strict=True) if keep
+    ]
+    return [list(point) for point in (segment.start_latlon, *between, segment.end_latlon)]
+
+
 def export_view(
     route_dir: Path,
     cfg: Settings,
@@ -142,8 +151,10 @@ def export_view(
 
     review_by_segment = load_review(route_dir)
     windows = grade_windows(route, segments, cfg)
+    paths = {segment.segment_id: segment_path(route, segment) for segment in segments}
 
     data: dict[str, Any] = dict(report)
+    data["route_name"] = route_dir.resolve().name
     data["segments"] = [
         {
             **segment,
@@ -154,6 +165,7 @@ def export_view(
             ],
             "review": review_by_segment.get(segment["segment_id"], {}),
             "grade_window": windows.get(segment["segment_id"]),
+            "path_latlon": paths[segment["segment_id"]],
         }
         for segment in report["segments"]
     ]
@@ -195,6 +207,18 @@ def discover_routes(root: Path) -> dict[str, Path]:
     }
 
 
+def _write_route_index(routes: dict[str, Path], out_dir: Path) -> None:
+    """List the routes for the page, numbered by sorted name.
+
+    The number is display only: a new route can shift it, so nothing is keyed on it.
+    """
+    index = [
+        {"id": route_id, "label": f"R{number:02d}-{route_id}"}
+        for number, route_id in enumerate(sorted(routes), start=1)
+    ]
+    (out_dir / "routes.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
+
+
 def export_routes(routes: dict[str, Path], cfg: Settings, out_dir: Path) -> Path:
     """Render every route into its own subdirectory under one shared page.
 
@@ -204,12 +228,10 @@ def export_routes(routes: dict[str, Path], cfg: Settings, out_dir: Path) -> Path
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    index = []
     for route_id in sorted(routes):
         route_out = export_view(routes[route_id], cfg, out_dir / route_id, route_id=route_id)
         (route_out / "index.html").unlink()  # only the shared page at out_dir is served
-        index.append({"id": route_id, "label": route_id})
-    (out_dir / "routes.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
+    _write_route_index(routes, out_dir)
     shutil.copyfile(TEMPLATE, out_dir / "index.html")
     return out_dir
 
@@ -227,5 +249,4 @@ def add_route(
     route_out = export_view(route_dir, cfg, out_dir / route_id, route_id=route_id)
     (route_out / "index.html").unlink()
     routes[route_id] = Path(route_dir).resolve()
-    index = [{"id": known, "label": known} for known in sorted(routes)]
-    (out_dir / "routes.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
+    _write_route_index(routes, out_dir)
