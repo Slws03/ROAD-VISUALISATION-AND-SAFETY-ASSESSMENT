@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 
 from irap_screening.config import Settings
+from irap_screening.decision.report import sites
 from irap_screening.io.align import AlignedRoute, _epoch_seconds, align_route
 from irap_screening.io.detections import load_detection_set
 from irap_screening.io.schema import Segment
@@ -32,9 +33,9 @@ from irap_screening.modules.curvature import (
 from irap_screening.modules.grade import (
     _accel_pitch,
     gps_grade_series,
+    inner_samples,
     longitudinal_accel,
     pitch_series,
-    inner_samples,
     sustained_grade_window,
 )
 from irap_screening.modules.lane import lane_contrasts
@@ -189,6 +190,10 @@ def export_view(
             ],
         }
         for segment in report["segments"]
+    ]
+    data["sites"] = [
+        {key: value for key, value in site.items() if key != "recommendation"}
+        for site in sites(report["segments"])
     ]
     data["profile"] = build_profile(route, cfg)
     contrasts = lane_contrasts(

@@ -7,6 +7,7 @@ from irap_screening.config import load_config
 from irap_screening.decision.report import (
     SCHEMA_VERSION,
     build_report,
+    sites,
     to_geojson,
     to_markdown,
     write_report,
@@ -214,3 +215,20 @@ def test_signs_double_line_and_frame_reference_are_rendered():
     assert first["signs"][0]["at_m"] == 70.0
     assert first["double_line"]["present"] is True
     assert first["representative_frame_id"] == "f_000001"
+
+def test_sites_list_each_series_once_in_route_order():
+    """A series is one site however many segments carry it; a grade gap is its segment's."""
+    segments, module_results, existence, _ = _fixture()
+    curve = Recommendation(
+        rule="curve_warning_incomplete",
+        trigger={
+            "module": "curvature", "series_id": "S01", "curve_start_m": 150.0, "curve_end_m": 180.0
+        },
+        missing=["chevron"],
+    )
+    grade = Recommendation(rule="grade_overtaking_control_missing", trigger={"module": "grade"})
+    recommendations = {"R01-0000": [grade], "R01-0001": [curve]}
+    report = build_report("R01", segments, module_results, existence, recommendations, cfg=CFG)
+    listed = sites(report["segments"])
+    assert [(s["id"], s["start_m"]) for s in listed] == [("R01-0000", 0.0), ("S01", 150.0)]
+    assert "| S01 | 150-180 m | curve_warning_incomplete | R01-0001 |" in to_markdown(report)
