@@ -1166,6 +1166,7 @@ document.addEventListener("click", (event) => {
 const RULE_TITLE = {
   curve_warning_incomplete: "Curve warning incomplete",
   grade_overtaking_control_missing: "No overtaking control on a critical grade",
+  lane_marking_poor: "Lane markings hard to see",
 };
 // The warning sign JKR ATJ 2B/85 cl. 2.3 names for the series (gapcheck.py).
 const SIGN_NAME = {
@@ -1201,6 +1202,16 @@ function recommendationText(rec) {
     if (!without) text += "Chevron alignment markers were detected on every curve.";
     else if (count === 1) text += "No chevron alignment markers were detected on the curve.";
     else text += `No chevron alignment markers were detected on ${without} of the ${count} curves.`;
+  } else if (rec.rule === "lane_marking_poor") {
+    // One recommendation per stretch of adjacent segments with poor delineation.
+    const count = Math.round(trigger.segments || 1);
+    const where = count > 1 ? `a stretch of ${count} segments (${trigger.series_id})` : `a segment (${trigger.series_id})`;
+    text = `This segment is part of ${where} from ${Math.round(trigger.start_m)} m to `
+         + `${Math.round(trigger.end_m)} m along the route where lane markings are hard to see: `
+         + `${Math.round(trigger.lines_visible)} of the ${Math.round(trigger.lines_total)} lines detected across its photos `
+         + `reach the visibility threshold (Weber contrast ${trigger.contrast_threshold}). Check on site, then repaint the centre `
+         + `and edge lines, or mark them where the road has none. The detector cannot tell a worn line `
+         + `from the edge of an unmarked road.`;
   } else if (rec.rule === "grade_overtaking_control_missing") {
     const grade = trigger.grade_pct ? ` (${trigger.grade_pct.toFixed(1)}%)` : "";
     text = `This segment has a critical grade${grade}, and no overtaking control `

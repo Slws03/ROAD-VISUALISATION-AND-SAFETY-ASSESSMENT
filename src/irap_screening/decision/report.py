@@ -167,7 +167,8 @@ def to_markdown(report: dict[str, Any]) -> str:
         lines.append("No gaps found: every hazardous segment already has its mitigation.")
         return "\n".join(lines) + "\n"
 
-    # A curve series' recommendation is carried by every segment it crosses;
+    # A curve series' or marking stretch's recommendation is carried by every
+    # segment it crosses;
     # it is written out once, at the first, and referred to afterwards.
     first_segment_of: dict[str, str] = {}
     for record in flagged:
@@ -180,7 +181,7 @@ def to_markdown(report: dict[str, Any]) -> str:
             series = recommendation["trigger"].get("series_id")
             if series in first_segment_of:
                 lines.append(
-                    f"- {recommendation['rule']} - curve series {series}, "
+                    f"- {recommendation['rule']} - {series}, "
                     f"see {first_segment_of[series]}."
                 )
                 continue

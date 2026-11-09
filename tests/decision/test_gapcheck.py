@@ -243,3 +243,29 @@ def test_placement_distance_is_configurable():
     cfg = load_config(overrides=["gapcheck.curve_sign_distance_m=100"])
     entry = _check(signs=[_sign("Bend", 410.0)], cfg=cfg)["R01-0005"][0]
     assert "advance_bend_sign" in entry.present
+
+
+def test_an_unchecked_sign_alone_still_recommends_a_look():
+    """Chevrons all present, the sign position not photographed: flag it for a person."""
+    recs = _check(
+        signs=[_sign("Chevron", 150.0)],
+        curves=[Curve(110.0, 190.0, LEFT, 312.5)],
+        targets=(1,),
+    )
+    entry = recs["R01-0001"][0]
+    assert entry.missing == [] and entry.unchecked == ["advance_bend_sign"]
+
+
+def test_adjacent_poor_marking_is_one_stretch_with_one_recommendation():
+    """Segments 4 and 5 touch, 7 stands apart: two stretches, not three."""
+    recs = _check(curvature=Flag.NORMAL, delineation=Flag.CRITICAL, curves=(), targets=(4, 5, 7))
+    first, second = recs["R01-0004"][0], recs["R01-0007"][0]
+    assert first.rule == "lane_marking_poor" and first.missing == ["visible_marking"]
+    assert recs["R01-0005"][0] is first
+    assert (first.trigger["start_m"], first.trigger["end_m"]) == (400.0, 600.0)
+    assert second.trigger["series_id"] == "D02" and recs["R01-0006"] == []
+
+
+def test_poor_marking_on_a_critical_curve_gets_its_own_recommendation():
+    rules = sorted(r.rule for r in _check(delineation=Flag.CRITICAL)["R01-0005"])
+    assert rules == ["curve_warning_incomplete", "lane_marking_poor"]

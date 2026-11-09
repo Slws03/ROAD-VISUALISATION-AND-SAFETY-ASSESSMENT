@@ -160,7 +160,7 @@ def test_markdown_writes_a_curve_series_out_once():
     text = to_markdown(build_report("R01", segments, module_results, existence,
                                     recommendations, cfg=CFG))
     assert text.count("Curve series S01 is missing chevrons.") == 1
-    assert "curve series S01, see R01-0000" in text
+    assert "S01, see R01-0000" in text
 
 
 def test_write_report_produces_all_three_files(tmp_path: Path):

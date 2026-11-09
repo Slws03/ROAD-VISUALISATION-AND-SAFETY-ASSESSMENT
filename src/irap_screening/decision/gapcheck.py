@@ -14,6 +14,8 @@ The three mitigations occupy different spaces and are checked differently:
 - Chevron: runs along a curve, so it is checked on each curve of the series.
 - No-overtaking control: covers the hazardous stretch, checked by overlap with
   the segment.
+- Lane marking: the delineation module's own finding. Adjacent segments it
+  flags critical are one stretch to repaint, with one recommendation.
 
 Checking chevrons or double lines upstream would be wrong; they belong inside
 the hazardous stretch, not before it.
@@ -38,7 +40,9 @@ from irap_screening.io.schema import (
 )
 from irap_screening.modules.curvature import RIGHT, Curve
 
-MITIGATIONS = ("advance_bend_sign", "chevron", "no_overtaking_sign", "double_line")
+MITIGATIONS = (
+    "advance_bend_sign", "chevron", "no_overtaking_sign", "double_line", "visible_marking"
+)
 
 ADVANCE_BEND_CLASSES = frozenset({"Bend", "Double Bend"})
 CHEVRON_CLASS = "Chevron"
@@ -213,6 +217,47 @@ def _curve_recommendation(
     )
 
 
+def _marking_recommendation(
+    number: int,
+    stretch: list[Segment],
+    module_results: dict[str, list[ModuleResult]],
+    cfg: Settings,
+) -> Recommendation:
+    """Rule 3 for one stretch of adjacent segments with poor delineation.
+
+    The detector cannot tell a worn line from an unmarked road edge, so the
+    recommendation does not say which: repaint, or mark where there is none.
+    """
+    def summed(metric: str) -> float:
+        return sum(
+            _metric_of(module_results, "delineation", s.segment_id, metric) or 0.0
+            for s in stretch
+        )
+
+    visible, total = summed("lines_visible"), summed("lines_total")
+    start_m, end_m = stretch[0].start_m, stretch[-1].end_m
+    return Recommendation(
+        rule="lane_marking_poor",
+        trigger={
+            "module": "delineation",
+            "series_id": f"D{number:02d}",
+            "start_m": start_m,
+            "end_m": end_m,
+            "segments": float(len(stretch)),
+            "lines_visible": visible,
+            "lines_total": total,
+            "contrast_threshold": cfg.lane.weber_adequate,
+        },
+        missing=["visible_marking"],
+        present=[],
+        text=(
+            f"Stretch D{number:02d} ({start_m:.0f}-{end_m:.0f} m): {visible:.0f} of "
+            f"{total:.0f} lines detected across its photos clearly visible. Repaint, or mark where "
+            "there is none, after a site check."
+        ),
+    )
+
+
 def _metric_of(
     results: dict[str, list[ModuleResult]], module: str, segment_id: str, key: str
 ) -> float | None:
@@ -228,7 +273,7 @@ def run_gapcheck(
     curves: list[Curve],
     frame_m: Sequence[float],
 ) -> dict[str, list[Recommendation]]:
-    """Apply rules 1 and 2 and return recommendations keyed by segment id.
+    """Apply rules 1 to 3 and return recommendations keyed by segment id.
 
     curves are find_curves' bends; frame_m is where each photo was taken.
     """
@@ -255,6 +300,23 @@ def run_gapcheck(
         for segment in critical:
             if any(_overlaps(segment, c.start_m, c.end_m) for c in series):
                 recommendations[segment.segment_id].append(recommendation)
+
+    # Rule 3: poor delineation needs the lines repainted. Adjacent poor
+    # segments are one stretch; a normal or unassessed one ends it.
+    stretches: list[list[Segment]] = []
+    run: list[Segment] = []
+    for segment in segments:
+        if _flag_of(module_results, "delineation", segment.segment_id) is Flag.CRITICAL:
+            run.append(segment)
+        elif run:
+            stretches.append(run)
+            run = []
+    if run:
+        stretches.append(run)
+    for number, stretch in enumerate(stretches, start=1):
+        recommendation = _marking_recommendation(number, stretch, module_results, cfg)
+        for segment in stretch:
+            recommendations[segment.segment_id].append(recommendation)
 
     for segment in segments:
         grade_flag = _flag_of(module_results, "grade", segment.segment_id)
