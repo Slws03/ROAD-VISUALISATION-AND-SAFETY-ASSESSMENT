@@ -105,5 +105,10 @@ sign:
   imgsz: 1280                    # matches the training run (args.yaml imgsz: 1280)
 
 gapcheck:
-  curve_sign_distance_m: 230     # JKR: bend sign placed 230 m before curve entry
+  curve_sign_distance_m: 230     # JKR ATJ 2B/85 cl. 2.3: warning sign 230 m before
+                                 # the first curve's tangent point
   curve_sign_tolerance_m: 50     # tolerance around that point
+  curve_sign_lookahead_m: 50     # a sign is photographed before the camera reaches
+                                 # it: photos up to this far before the window count
+  curve_series_gap_m: 180        # JKR ATJ 2B/85 cl. 2.3: curves closer than this are
+                                 # one series (Reverse Curve or Winding Road sign)

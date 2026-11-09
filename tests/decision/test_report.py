@@ -148,6 +148,21 @@ def test_markdown_lists_the_missing_mitigation():
     assert "chevron" in text
 
 
+def test_markdown_writes_a_curve_series_out_once():
+    """Every segment a series crosses carries its recommendation; the text appears once."""
+    segments, module_results, existence, _ = _fixture()
+    shared = Recommendation(
+        rule="curve_warning_incomplete",
+        trigger={"module": "curvature", "series_id": "S01"},
+        missing=["chevron"], text="Curve series S01 is missing chevrons.",
+    )
+    recommendations = {"R01-0000": [shared], "R01-0001": [shared]}
+    text = to_markdown(build_report("R01", segments, module_results, existence,
+                                    recommendations, cfg=CFG))
+    assert text.count("Curve series S01 is missing chevrons.") == 1
+    assert "curve series S01, see R01-0000" in text
+
+
 def test_write_report_produces_all_three_files(tmp_path: Path):
     write_report(tmp_path, _report())
     assert (tmp_path / "report.json").exists()

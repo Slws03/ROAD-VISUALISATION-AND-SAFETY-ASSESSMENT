@@ -1167,32 +1167,40 @@ const RULE_TITLE = {
   curve_warning_incomplete: "Curve warning incomplete",
   grade_overtaking_control_missing: "No overtaking control on a critical grade",
 };
-// The two curve signs are searched in different places: the advance sign in a
-// window before the curve's entry, chevrons only within this segment.
-const MITIGATION_TEXT = {
-  advance_bend_sign: "an advance bend warning sign before the curve",
-  chevron: "chevron alignment markers in this segment",
+// The warning sign JKR ATJ 2B/85 cl. 2.3 names for the series (gapcheck.py).
+const SIGN_NAME = {
+  "WD.10a": "a Curve sign (WD.10a, curve to the right)",
+  "WD.10b": "a Curve sign (WD.10b, curve to the left)",
+  "WD.2a": "a Reverse Curve sign (WD.2a, right curve first)",
+  "WD.2b": "a Reverse Curve sign (WD.2b, left curve first)",
+  "WD.11": "a Winding Road sign (WD.11)",
 };
-
-function listText(items, word) {
-  if (items.length < 2) return items.join("");
-  return `${items.slice(0, -1).join(", ")} ${word} ${items[items.length - 1]}`;
-}
 
 function recommendationText(rec) {
   const trigger = rec.trigger || {};
-  const named = (keys) => keys.map((key) => MITIGATION_TEXT[key] ?? key);
+  const has = (list, key) => (list || []).includes(key);
   let text;
   if (rec.rule === "curve_warning_incomplete") {
-    // radius_m is this segment's own; the start and end span the whole bend.
-    // gapcheck.py writes 0 when the radius is missing, so it is left out then.
-    const radius = trigger.radius_m
-      ? ` Its radius in this segment is about ${Math.round(trigger.radius_m)} m.` : "";
-    text = `This segment lies on a critical curve that runs from `
+    // One recommendation per series of curves (closer than 180 m apart); every
+    // critical segment the series crosses carries the same one.
+    const count = Math.round(trigger.curves || 1);
+    const what = count > 1 ? `a series of ${count} curves (${trigger.series_id})` : `a curve (${trigger.series_id})`;
+    text = `This segment lies on ${what} sharper than the threshold, from `
          + `${Math.round(trigger.curve_start_m)} m to ${Math.round(trigger.curve_end_m)} m `
-         + `along the route.${radius} `
-         + `The detector did not find ${listText(named(rec.missing), "or")}.`;
-    if (rec.present.length) text += ` It did find ${listText(named(rec.present), "and")}.`;
+         + `along the route; the sharpest radius is about ${Math.round(trigger.radius_m)} m. `
+         + `JKR ATJ 2B/85 calls for ${SIGN_NAME[trigger.sign_code] ?? trigger.sign_code} `
+         + `about ${Math.round(trigger.sign_at_m)} m along the route, 230 m before the first curve. `;
+    if (has(rec.missing, "advance_bend_sign")) {
+      text += "The detector found no bend warning sign near there. ";
+    } else if (has(rec.unchecked, "advance_bend_sign")) {
+      text += "Whether one is there could not be checked: the photos do not cover that stretch. ";
+    } else {
+      text += "A bend warning sign was detected there. ";
+    }
+    const without = Math.round(trigger.curves_without_chevrons || 0);
+    if (!without) text += "Chevron alignment markers were detected on every curve.";
+    else if (count === 1) text += "No chevron alignment markers were detected on the curve.";
+    else text += `No chevron alignment markers were detected on ${without} of the ${count} curves.`;
   } else if (rec.rule === "grade_overtaking_control_missing") {
     const grade = trigger.grade_pct ? ` (${trigger.grade_pct.toFixed(1)}%)` : "";
     text = `This segment has a critical grade${grade}, and no overtaking control `

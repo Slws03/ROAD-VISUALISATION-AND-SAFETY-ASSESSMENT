@@ -92,6 +92,8 @@ class SignSettings(_Section):
 class GapCheckSettings(_Section):
     curve_sign_distance_m: PositiveFloat = 230.0
     curve_sign_tolerance_m: PositiveFloat = 50.0
+    curve_sign_lookahead_m: PositiveFloat = 50.0
+    curve_series_gap_m: PositiveFloat = 180.0
 
 
 class Settings(_Section):

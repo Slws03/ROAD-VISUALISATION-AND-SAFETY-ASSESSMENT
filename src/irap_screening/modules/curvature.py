@@ -38,6 +38,8 @@ and where they disagreed neither was reliably right
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from irap_screening.config import Settings
@@ -105,6 +107,15 @@ def radius_series(route: AlignedRoute, cfg: Settings, bias: float) -> np.ndarray
     """
     if len(route.imu) < 2:
         return np.full(len(route.imu), np.nan)
+    along, heading = _gyro_heading(route, cfg, bias)
+    return _window_radius(route, along, heading, cfg)
+
+
+def _gyro_heading(
+    route: AlignedRoute, cfg: Settings, bias: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bias-corrected gyro heading (radians, counter-clockwise positive) against
+    distance, one point per moving IMU sample."""
     times = np.array([sample.timestamp_utc.timestamp() for sample in route.imu])
     gz = np.array([sample.gz for sample in route.imu], dtype=float) - bias
     # A stopped vehicle does not turn, so whatever the gyro reads meanwhile is
@@ -117,7 +128,7 @@ def radius_series(route: AlignedRoute, cfg: Settings, bias: float) -> np.ndarray
     # stopped it does not; the first sample of each stop stands for it.
     dist = route.imu_dist_m
     moving = np.concatenate([[True], np.diff(dist) > 0.0])
-    return _window_radius(route, dist[moving], heading[moving], cfg)
+    return dist[moving], heading[moving]
 
 
 def gps_radius_series(route: AlignedRoute, cfg: Settings) -> np.ndarray | None:
@@ -156,6 +167,81 @@ def _window_radius(
         window = np.where(np.abs(turn) > 1e-12, cfg.curvature.window_m / np.abs(turn), _HUGE_RADIUS_M)
     radii[inside] = np.clip(window[inside], 0.0, _HUGE_RADIUS_M)
     return np.where(route.imu_speed_mps >= cfg.curvature.v_min_mps, radii, np.nan)
+
+
+LEFT, RIGHT = "left", "right"
+_STRAIGHT_M = 800.0  # iRAP curvature category 1 (straight or gently curving)
+
+
+@dataclass(frozen=True)
+class Curve:
+    """One bend sharper than threshold_m, located to the IMU sample, not the segment."""
+
+    start_m: float
+    end_m: float
+    direction: str  # LEFT or RIGHT
+    radius_m: float  # its sharpest window
+
+
+def find_curves(route: AlignedRoute, cfg: Settings, bias: float) -> list[Curve]:
+    """Each stretch of road whose windowed radius stays below threshold_m.
+
+    Gap-check needs where a bend starts and which way it turns, which the 100 m
+    segment cannot give: a curve pieced together from segments is placed to
+    within 100 m, too coarse for a sign 230 m before it or for JKR's 180 m
+    between the curves of a series. The extent is where the window centre is,
+    so it reads up to window_m / 2 early or late.
+
+    Two same-direction stretches closer than window_m are one bend whose radius
+    strayed above the threshold, or whose apex was driven too slowly to read
+    (NaN), unless the road between straightens out: radius reaching the iRAP
+    straight category (_STRAIGHT_M) over at least window_m / 2, which a single
+    noisy window cannot do. Those are two bends the same way (broken-back).
+    Opposite-direction ones are left apart: the inflection between them always
+    reads above the threshold.
+
+    The direction is the sign of the turn at the sharpest window, positive
+    (counter-clockwise) being a left turn. On the Samarahan routes GPS bearing
+    agreed on 131 of the 133 stretches it could read
+    (D:/FYP/recommendation_review/README.md).
+    """
+    if len(route.imu) < 2:
+        return []
+    radii = radius_series(route, cfg, bias)
+    along, heading = _gyro_heading(route, cfg, bias)
+    dist = route.imu_dist_m
+    half = cfg.curvature.window_m / 2.0
+    turn = np.interp(dist + half, along, heading) - np.interp(dist - half, along, heading)
+
+    sharp = np.nan_to_num(radii, nan=np.inf) < cfg.curvature.threshold_m
+    edges = np.flatnonzero(np.diff(np.concatenate([[0], sharp.astype(int), [0]])))
+    curves: list[Curve] = []
+    last_end = 0
+    for lo, end in zip(edges[::2], edges[1::2], strict=True):
+        sharpest = lo + int(np.argmin(radii[lo:end]))
+        curve = Curve(
+            start_m=float(dist[lo]),
+            end_m=float(dist[end - 1]),
+            direction=LEFT if turn[sharpest] > 0 else RIGHT,
+            radius_m=float(radii[sharpest]),
+        )
+        last = curves[-1] if curves else None
+        gap = curve.start_m - last.end_m if last is not None else np.inf
+        between = np.nanmax(radii[last_end:lo], initial=0.0)
+        straightens = gap >= half and bool(between >= _STRAIGHT_M)
+        last_end = end
+        if (
+            last is not None
+            and last.direction == curve.direction
+            and gap < cfg.curvature.window_m
+            and not straightens
+        ):
+            curves[-1] = Curve(
+                last.start_m, curve.end_m, last.direction, min(last.radius_m, curve.radius_m)
+            )
+        else:
+            curves.append(curve)
+    return curves
 
 
 def analyse_curvature(

@@ -98,12 +98,14 @@ def test_pipeline_flags_the_curve_as_critical(tmp_path: Path):
 
 
 def test_pipeline_recommends_the_missing_curve_warning(tmp_path: Path):
-    """No signs were detected, so both mitigations should be reported missing."""
+    """No signs were detected: chevrons are missing. The curve starts with the
+    route, so the advance sign's position was never photographed: unchecked."""
     _write_route(tmp_path)
     report = run_pipeline(tmp_path, load_config())
     entry = report["segments"][0]["recommendations"][0]
     assert entry["rule"] == "curve_warning_incomplete"
-    assert set(entry["missing"]) == {"advance_bend_sign", "chevron"}
+    assert entry["missing"] == ["chevron"]
+    assert entry["unchecked"] == ["advance_bend_sign"]
 
 
 def test_pipeline_codes_the_unsigned_curve_as_poor_quality(tmp_path: Path):

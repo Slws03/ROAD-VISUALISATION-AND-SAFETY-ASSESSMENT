@@ -167,6 +167,9 @@ def to_markdown(report: dict[str, Any]) -> str:
         lines.append("No gaps found: every hazardous segment already has its mitigation.")
         return "\n".join(lines) + "\n"
 
+    # A curve series' recommendation is carried by every segment it crosses;
+    # it is written out once, at the first, and referred to afterwards.
+    first_segment_of: dict[str, str] = {}
     for record in flagged:
         seg_id = record["segment_id"]
         start = record["start_m"]
@@ -174,6 +177,15 @@ def to_markdown(report: dict[str, Any]) -> str:
         lines.append(f"### {seg_id} ({start:.0f}-{end:.0f} m)")
         lines.append("")
         for recommendation in record["recommendations"]:
+            series = recommendation["trigger"].get("series_id")
+            if series in first_segment_of:
+                lines.append(
+                    f"- {recommendation['rule']} - curve series {series}, "
+                    f"see {first_segment_of[series]}."
+                )
+                continue
+            if series is not None:
+                first_segment_of[series] = seg_id
             missing = ", ".join(recommendation["missing"]) or "none"
             # text already names the missing mitigations in a full sentence; fall
             # back to the bare list only when a rule supplies no text.

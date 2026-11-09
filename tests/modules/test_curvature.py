@@ -10,8 +10,11 @@ from irap_screening.config import load_config
 from irap_screening.io.align import align_route
 from irap_screening.io.schema import Flag, ImuSample
 from irap_screening.modules.curvature import (
+    LEFT,
+    RIGHT,
     analyse_curvature,
     estimate_gyro_bias,
+    find_curves,
     irap_curvature_category,
 )
 from irap_screening.segment import build_segments
@@ -274,3 +277,71 @@ def test_yaw_read_while_stopped_is_not_a_turn():
     imu = sorted(shifted(imu) + parked_imu, key=by_time)
     results, _ = _analyse(frames, gps, imu)
     assert all(r.flag is not Flag.CRITICAL for r in results)
+
+def _curves(frames, gps, imu):
+    cfg = load_config()
+    route = align_route(frames, gps, imu)
+    return find_curves(route, cfg, estimate_gyro_bias(route, cfg))
+
+
+def _turn_with(imu, gz_at):
+    """Replace each sample's yaw rate with gz_at(distance driven, gz)."""
+    speed = 16.7
+    t0 = imu[0].timestamp_utc
+    return [
+        s.model_copy(update={"gz": gz_at((s.timestamp_utc - t0).total_seconds() * speed, s.gz)})
+        for s in imu
+    ]
+
+
+def test_a_counter_clockwise_curve_is_one_left_curve_of_its_radius():
+    curves = _curves(*curved_route(radius_m=200.0, arc_length_m=300.0))
+    assert len(curves) == 1
+    assert curves[0].direction == LEFT
+    assert curves[0].radius_m == pytest.approx(200.0, rel=0.05)
+
+
+def test_a_clockwise_curve_is_a_right_curve():
+    frames, gps, imu = curved_route(radius_m=200.0, arc_length_m=300.0)
+    curves = _curves(frames, gps, _turn_with(imu, lambda d, gz: -gz))
+    assert [c.direction for c in curves] == [RIGHT]
+
+
+def test_a_straight_road_has_no_curves():
+    assert _curves(*straight_route(length_m=500.0)) == []
+
+
+def test_the_curve_is_located_to_the_sample_not_the_segment():
+    """The road turns from 120 m; the curve starts there, not at 100 m."""
+    frames, gps, imu = curved_route(radius_m=200.0, arc_length_m=300.0)
+    curves = _curves(frames, gps, _turn_with(imu, lambda d, gz: 0.0 if d < 120.0 else gz))
+    assert len(curves) == 1
+    # The window centre reads the turn up to window_m / 2 early.
+    assert 120.0 - 25.0 - 2.0 <= curves[0].start_m <= 120.0 + 2.0
+
+
+def test_a_short_straight_inside_a_bend_does_not_split_it():
+    """Same direction, closer than window_m: one bend that briefly eased.
+
+    A 30 m straight reads as a 30 m gap between the two stretches.
+    """
+    frames, gps, imu = curved_route(radius_m=200.0, arc_length_m=400.0)
+    curves = _curves(
+        frames, gps, _turn_with(imu, lambda d, gz: 0.0 if 180.0 <= d < 210.0 else gz)
+    )
+    assert len(curves) == 1
+
+
+def test_opposite_turns_are_two_curves():
+    frames, gps, imu = curved_route(radius_m=200.0, arc_length_m=400.0)
+    curves = _curves(frames, gps, _turn_with(imu, lambda d, gz: gz if d < 200.0 else -gz))
+    assert [c.direction for c in curves] == [LEFT, RIGHT]
+
+
+def test_a_straight_between_two_bends_the_same_way_keeps_them_apart():
+    """45 m of straight road reads above 800 m: two bends (broken-back), not one."""
+    frames, gps, imu = curved_route(radius_m=200.0, arc_length_m=400.0)
+    curves = _curves(
+        frames, gps, _turn_with(imu, lambda d, gz: 0.0 if 180.0 <= d < 225.0 else gz)
+    )
+    assert [c.direction for c in curves] == [LEFT, LEFT]

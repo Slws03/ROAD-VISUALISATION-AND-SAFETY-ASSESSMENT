@@ -174,4 +174,7 @@ class Recommendation(BaseModel):
     trigger: dict[str, float | str] = Field(default_factory=dict)
     missing: list[str] = Field(default_factory=list)
     present: list[str] = Field(default_factory=list)
+    # Mitigations the route cannot show either way, e.g. a sign position
+    # before the first photo: neither missing nor present.
+    unchecked: list[str] = Field(default_factory=list)
     text: str = ""

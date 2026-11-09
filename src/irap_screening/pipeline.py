@@ -22,7 +22,11 @@ from irap_screening.io.detections import load_detection_set
 from irap_screening.io.schema import ModuleResult
 from irap_screening.io.sources.fixture import FixtureSource
 from irap_screening.modules.condition import analyse_condition
-from irap_screening.modules.curvature import analyse_curvature
+from irap_screening.modules.curvature import (
+    analyse_curvature,
+    estimate_gyro_bias,
+    find_curves,
+)
 from irap_screening.modules.grade import analyse_grade, pitch_series
 from irap_screening.modules.lane import analyse_lane
 from irap_screening.modules.marking import analyse_marking
@@ -72,7 +76,10 @@ def run_pipeline(route_dir: Path, cfg: Settings, route_id: str = "R01") -> dict[
         image_root=route_dir,
         grade_results=module_results["grade"],
     )
-    recommendations = run_gapcheck(segments, module_results, existence, cfg)
+    curves = find_curves(route, cfg, estimate_gyro_bias(route, cfg))
+    recommendations = run_gapcheck(
+        segments, module_results, existence, cfg, curves, route.frame_dist_m
+    )
     quality = code_quality_of_curve(segments, module_results, existence, cfg)
 
     return build_report(
