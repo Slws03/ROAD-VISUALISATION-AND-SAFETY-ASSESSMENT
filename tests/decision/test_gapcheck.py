@@ -3,7 +3,6 @@
 from irap_screening.config import load_config
 from irap_screening.decision.gapcheck import curve_series, jkr_warning_sign, run_gapcheck
 from irap_screening.io.schema import (
-    DoubleLineRecord,
     ExistenceResult,
     Flag,
     ModuleResult,
@@ -50,17 +49,15 @@ def _module_results(
         "curvature": series("curvature", curvature),
         "grade": series("grade", grade),
         "delineation": series("delineation", delineation),
-        "condition": series("condition", Flag.NORMAL),
     }
 
 
-def _existence(segments, signs=None, double_line_on=None):
+def _existence(segments, signs=None):
     signs = signs or []
     return [
         ExistenceResult(
             segment_id=s.segment_id,
             signs=[sign for sign in signs if s.start_m <= sign.at_m < s.end_m],
-            double_line=DoubleLineRecord(present=(s.segment_id == double_line_on)),
         )
         for s in segments
     ]
@@ -194,31 +191,16 @@ def test_a_normal_segment_a_curve_reaches_into_carries_nothing():
     assert recs["R01-0005"] and recs["R01-0006"] == []
 
 
-def test_critical_grade_without_overtaking_control_is_flagged():
-    entry = _check(curvature=Flag.NORMAL, grade=Flag.CRITICAL)["R01-0005"][0]
-    assert entry.rule == "grade_overtaking_control_missing"
-    assert set(entry.missing) == {"no_overtaking_sign", "double_line"}
-
-
-def test_double_line_alone_satisfies_the_grade_rule():
-    """Malaysian no-overtaking control is usually paint, not a sign."""
-    segments = _segments()
-    recs = run_gapcheck(
-        segments, _module_results(segments, grade=Flag.CRITICAL),
-        _existence(segments, double_line_on="R01-0005"), CFG, [], PHOTOS,
-    )
-    assert recs["R01-0005"] == []
-
-
-def test_no_overtaking_sign_alone_satisfies_the_grade_rule():
-    recs = _check(signs=[_sign("No overtaking", 550.0)], curvature=Flag.NORMAL, grade=Flag.CRITICAL)
-    assert recs["R01-0005"] == []
+def test_a_critical_grade_alone_gets_no_recommendation():
+    """No overtaking control can be checked: the double-line scan was dropped
+    (doubleline_review) and the routes hold no No overtaking sign."""
+    assert _check(curvature=Flag.NORMAL, grade=Flag.CRITICAL)["R01-0005"] == []
 
 
 def test_a_critical_curve_on_a_critical_grade_adds_no_rule_of_its_own():
     """Only missing mitigations are recommended; the combination names none."""
     rules = sorted(r.rule for r in _check(grade=Flag.CRITICAL)["R01-0005"])
-    assert rules == ["curve_warning_incomplete", "grade_overtaking_control_missing"]
+    assert rules == ["curve_warning_incomplete"]
 
 
 def test_recommendations_carry_no_priority():

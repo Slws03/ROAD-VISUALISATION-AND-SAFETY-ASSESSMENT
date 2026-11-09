@@ -55,18 +55,6 @@ class LaneSettings(_Section):
     peak_window_frac: float = Field(default=0.005, ge=0.0, lt=0.5)
 
 
-class DoubleLineSettings(_Section):
-    window_steps: list[PositiveInt] = Field(default_factory=lambda: [50, 90, 130, 180, 240])
-    bg_window: PositiveInt = 81
-    contrast_thresh: float = Field(default=0.4, ge=0.0)
-    min_width: PositiveInt = 3
-    min_gap_merge: PositiveInt = 2
-    min_gap_px: PositiveInt = 3
-    max_gap_fraction: float = Field(default=0.9, gt=0.0, le=1.0)
-    max_gap_cap_px: PositiveInt = 150
-    anchor_tol_px: PositiveInt = 20
-
-
 class SignSettings(_Section):
     runner_conf: float = Field(default=0.10, ge=0.0, le=1.0)
     conf: float = Field(default=0.25, ge=0.0, le=1.0)
@@ -102,7 +90,6 @@ class Settings(_Section):
     curvature: CurvatureSettings = Field(default_factory=CurvatureSettings)
     grade: GradeSettings = Field(default_factory=GradeSettings)
     lane: LaneSettings = Field(default_factory=LaneSettings)
-    doubleline: DoubleLineSettings = Field(default_factory=DoubleLineSettings)
     sign: SignSettings = Field(default_factory=SignSettings)
     gapcheck: GapCheckSettings = Field(default_factory=GapCheckSettings)
 

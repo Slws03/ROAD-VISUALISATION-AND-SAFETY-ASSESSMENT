@@ -16,13 +16,11 @@ from pathlib import Path
 
 # The iRAP categories a reviewer may code per attribute, and the flag each
 # implies. Curvature splits at category 2/3 to match curvature.threshold_m
-# (400 m); change both together. Condition has no Medium flag to map to, as
-# the pipeline has no watch band, so Medium counts as normal.
+# (400 m); change both together.
 REVIEW_CATEGORIES: dict[str, dict[int, str]] = {
     "curvature": {1: "normal", 2: "normal", 3: "critical", 4: "critical"},
     "grade": {1: "normal", 4: "critical", 5: "critical"},
     "delineation": {1: "normal", 2: "critical"},
-    "condition": {1: "normal", 2: "normal", 3: "critical"},
     "quality_of_curve": {1: "normal", 2: "critical", 3: "normal"},
 }
 

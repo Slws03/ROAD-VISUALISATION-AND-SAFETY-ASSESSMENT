@@ -80,17 +80,6 @@ lane:
                                  # 266 segments to adequate. 0.005 is +-6 px at
                                  # 1280, +-10 at 1920. D:/FYP/delineation_review.
 
-doubleline:                      # from the doubleline_coord_scan experiment
-  window_steps: [50, 90, 130, 180, 240]
-  bg_window: 81
-  contrast_thresh: 0.4
-  min_width: 3
-  min_gap_merge: 2
-  min_gap_px: 3
-  max_gap_fraction: 0.9
-  max_gap_cap_px: 150
-  anchor_tol_px: 20
-
 sign:
   runner_conf: 0.10              # GPU-side floor, written into the cached artifact.
                                  # Must stay <= sign.conf: anything the runner drops

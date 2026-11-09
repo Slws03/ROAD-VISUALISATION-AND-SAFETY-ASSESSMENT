@@ -26,11 +26,11 @@ def test_save_then_load_round_trips(tmp_path: Path):
 
 def test_a_second_module_on_the_same_segment_does_not_clobber_the_first(tmp_path: Path):
     save_review_entry(tmp_path, "R01-0004", "delineation", 1, "")
-    save_review_entry(tmp_path, "R01-0004", "condition", 3, "pothole near f_000023")
+    save_review_entry(tmp_path, "R01-0004", "curvature", 3, "tight bend near f_000023")
 
     loaded = load_review(tmp_path)
     assert loaded["R01-0004"]["delineation"]["flag"] == "normal"
-    assert loaded["R01-0004"]["condition"]["flag"] == "critical"
+    assert loaded["R01-0004"]["curvature"]["flag"] == "critical"
 
 
 def test_saving_again_overwrites_the_prior_review_for_that_module(tmp_path: Path):
@@ -59,7 +59,6 @@ def test_each_category_implies_its_flag(tmp_path: Path):
     assert flag("curvature", 2) == "normal"  # follows threshold_m = 400
     assert flag("curvature", 3) == "critical"
     assert flag("grade", 4) == "critical"
-    assert flag("condition", 2) == "normal"  # Medium: no watch band to map to
     assert flag("quality_of_curve", 3) == "normal"
     assert flag("delineation", None) == "not_assessed"
 

@@ -41,18 +41,15 @@ class DetectionSet:
 
     lane: dict[str, DetectionRecord] = field(default_factory=dict)
     sign: dict[str, DetectionRecord] = field(default_factory=dict)
-    pothole: dict[str, DetectionRecord] = field(default_factory=dict)
 
 
 def load_detection_set(root: Path) -> DetectionSet:
-    """Read lane, sign and pothole artifacts from a detections directory.
+    """Read lane and sign artifacts from a detections directory.
 
-    A missing file yields an empty mapping rather than an error: the Road
-    Condition module is explicitly stubbable, and a run without it is valid.
+    A missing file yields an empty mapping rather than an error.
     """
     root = Path(root)
     return DetectionSet(
         lane=load_detections(root / "lane.jsonl"),
         sign=load_detections(root / "sign.jsonl"),
-        pothole=load_detections(root / "pothole.jsonl"),
     )

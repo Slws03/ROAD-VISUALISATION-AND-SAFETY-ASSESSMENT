@@ -83,9 +83,3 @@ def test_detection_set_loads_all_three_streams(tmp_path: Path):
     assert set(detections.lane) == {"f_000001"}
     assert set(detections.sign) == {"f_000001"}
 
-
-def test_missing_pothole_file_is_empty_not_an_error(tmp_path: Path):
-    """Road Condition is stubbable; its absence must not break the run."""
-    _write_jsonl(tmp_path / "lane.jsonl", [LANE_RECORD])
-    detections = load_detection_set(tmp_path)
-    assert detections.pothole == {}

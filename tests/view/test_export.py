@@ -123,7 +123,7 @@ def test_the_report_travels_intact(tmp_path):
     assert "coverage" in data
     assert "config" in data
     for segment in data["segments"]:
-        for module in ("curvature", "grade", "delineation", "condition"):
+        for module in ("curvature", "grade", "delineation"):
             assert "flag" in segment[module]
 
 
@@ -154,10 +154,9 @@ def test_coverage_uses_total_and_not_assessed(tmp_path):
     out = _export(tmp_path)
     data = json.loads((out / "data.json").read_text(encoding="utf-8"))
 
-    for module in ("curvature", "grade", "delineation", "condition"):
+    for module in ("curvature", "grade", "delineation"):
         entry = data["coverage"][module]
         assert set(entry) == {"total", "not_assessed"}
-    assert data["coverage"]["condition"]["not_assessed"] == data["coverage"]["condition"]["total"]
 
 
 def test_segments_carry_an_empty_review_when_none_was_ever_saved(tmp_path):

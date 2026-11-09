@@ -85,7 +85,7 @@ class DetectionRecord(BaseModel):
     frame_id: str
     image_path: str
     sha256: str
-    type: Literal["lane", "sign", "pothole"]
+    type: Literal["lane", "sign"]
     transform: Transform
     instances: list[LaneInstance | BoxInstance]
 
@@ -140,21 +140,6 @@ class SignRecord(BaseModel):
     at_m: float
 
 
-class DoubleLineRecord(BaseModel):
-    """present=False is ambiguous on its own: it means either "scanned, found
-    nothing" or "never scanned" (the scan only runs on a critical-grade
-    segment). assessed distinguishes the two for anything displaying this to
-    a person -- gap-check itself never needs it, since it only reads
-    `present` when grade is already critical, the same condition that
-    guarantees a scan ran.
-    """
-
-    present: bool
-    assessed: bool = True
-    confidence: float = 0.0
-    evidence: list[str] = Field(default_factory=list)
-
-
 class ExistenceResult(BaseModel):
     """Sign and Marking output. Carries existence facts, never a flag.
 
@@ -164,9 +149,6 @@ class ExistenceResult(BaseModel):
 
     segment_id: str
     signs: list[SignRecord] = Field(default_factory=list)
-    double_line: DoubleLineRecord = Field(
-        default_factory=lambda: DoubleLineRecord(present=False)
-    )
 
 
 class Recommendation(BaseModel):

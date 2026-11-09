@@ -30,7 +30,7 @@ from irap_screening.io.schema import (
 )
 
 SCHEMA_VERSION = "1.0"
-SCORING_MODULES = ("curvature", "grade", "delineation", "condition")
+SCORING_MODULES = ("curvature", "grade", "delineation")
 
 
 def _index(results: list[ModuleResult]) -> dict[str, ModuleResult]:
@@ -95,9 +95,6 @@ def build_report(
         entry = existence_by_segment.get(segment.segment_id)
         record["signs"] = (
             [sign.model_dump() for sign in entry.signs] if entry else []
-        )
-        record["double_line"] = (
-            entry.double_line.model_dump() if entry else {"present": False}
         )
 
         record["recommendations"] = [

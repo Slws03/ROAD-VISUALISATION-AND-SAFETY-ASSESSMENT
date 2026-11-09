@@ -12,13 +12,11 @@ The three mitigations occupy different spaces and are checked differently:
   curves closer than 180 m), 230 m before the first curve's tangent point,
   with tolerance. The series also decides which sign JKR calls for.
 - Chevron: runs along a curve, so it is checked on each curve of the series.
-- No-overtaking control: covers the hazardous stretch, checked by overlap with
-  the segment.
 - Lane marking: the delineation module's own finding. Adjacent segments it
   flags critical are one stretch to repaint, with one recommendation.
 
-Checking chevrons or double lines upstream would be wrong; they belong inside
-the hazardous stretch, not before it.
+Checking chevrons upstream would be wrong; they belong inside the curve, not
+before it.
 
 A sign is placed at the photo it was detected in (SignRecord.at_m), which is
 before the sign itself: the camera sees it ahead. Searches therefore reach
@@ -40,13 +38,10 @@ from irap_screening.io.schema import (
 )
 from irap_screening.modules.curvature import RIGHT, Curve
 
-MITIGATIONS = (
-    "advance_bend_sign", "chevron", "no_overtaking_sign", "double_line", "visible_marking"
-)
+MITIGATIONS = ("advance_bend_sign", "chevron", "visible_marking")
 
 ADVANCE_BEND_CLASSES = frozenset({"Bend", "Double Bend"})
 CHEVRON_CLASS = "Chevron"
-NO_OVERTAKING_CLASS = "No overtaking"
 
 
 def _is_critical(result: ModuleResult) -> bool:
@@ -277,7 +272,6 @@ def run_gapcheck(
 
     curves are find_curves' bends; frame_m is where each photo was taken.
     """
-    existence_by_segment = {entry.segment_id: entry for entry in existence}
     all_signs: list[SignRecord] = [sign for entry in existence for sign in entry.signs]
 
     recommendations: dict[str, list[Recommendation]] = {s.segment_id: [] for s in segments}
@@ -317,35 +311,5 @@ def run_gapcheck(
         recommendation = _marking_recommendation(number, stretch, module_results, cfg)
         for segment in stretch:
             recommendations[segment.segment_id].append(recommendation)
-
-    for segment in segments:
-        grade_flag = _flag_of(module_results, "grade", segment.segment_id)
-        entry = existence_by_segment.get(segment.segment_id)
-
-        # Rule 2: a critical grade needs no-overtaking control, sign or paint.
-        if grade_flag is Flag.CRITICAL:
-            sign_present = any(
-                sign.cls == NO_OVERTAKING_CLASS
-                and segment.start_m <= sign.at_m < segment.end_m
-                for sign in all_signs
-            )
-            paint_present = bool(entry and entry.double_line.present)
-
-            if not (sign_present or paint_present):
-                grade_pct = _metric_of(module_results, "grade", segment.segment_id, "grade_pct")
-                recommendations[segment.segment_id].append(
-                    Recommendation(
-                        rule="grade_overtaking_control_missing",
-                        trigger={"module": "grade", "grade_pct": grade_pct or 0.0},
-                        missing=["no_overtaking_sign", "double_line"],
-                        present=[],
-                        text=(
-                            f"Steep grade ({grade_pct:.1f} percent) has no overtaking "
-                            "control: neither a No overtaking sign nor a double line."
-                            if grade_pct
-                            else "Steep grade has no overtaking control."
-                        ),
-                    )
-                )
 
     return recommendations

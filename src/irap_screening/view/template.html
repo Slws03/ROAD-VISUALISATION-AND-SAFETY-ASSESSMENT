@@ -445,7 +445,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <script>
-const MODULES = ["curvature", "grade", "delineation", "condition"];
+const MODULES = ["curvature", "grade", "delineation"];
 const FLAG_COLOR = {
   normal: "#16a34a", watch: "#d97706",
   critical: "#dc2626", not_assessed: "#9ca3af",
@@ -610,8 +610,6 @@ const IRAP_DELINEATION_LABELS = {
   1: "1 - lane marking: adequate",
   2: "2 - lane marking: poor",
 };
-// Only a reviewer codes condition; the module itself is not built yet.
-const IRAP_CONDITION_LABELS = { 1: "1 - good", 2: "2 - medium", 3: "3 - poor" };
 
 // generated_at is stored in UTC (report.py's own source of truth); the
 // sidebar shows it in Malaysia time (UTC+8, no DST) since that is where this
@@ -634,8 +632,7 @@ function segmentHasGap(segment) {
 }
 
 // The category the page shows: the reviewer's where one was saved, else the
-// pipeline's. null where there is none (not assessed, or condition, which the
-// pipeline does not code).
+// pipeline's. null where there is none (not assessed).
 function shownCategory(segment, module) {
   const review = segment.review && segment.review[module];
   if (review) return review.category ?? null;
@@ -673,7 +670,6 @@ const FACET_NAMES = {
   curvature: { 1: "Straight", 2: "Moderate", 3: "Sharp", 4: "Very sharp" },
   grade: { 1: "Flat", 4: "Moderate", 5: "Steep" },
   delineation: { 1: "Adequate", 2: "Poor" },
-  condition: { 1: "Good", 2: "Medium", 3: "Poor" },
   quality_of_curve: { 1: "Adequate", 2: "Poor", 3: "Not applicable" },
 };
 const FACETS = ["status", ...FLAGGED];
@@ -1025,7 +1021,6 @@ const REVIEW_LABELS = {
   curvature: IRAP_CURVATURE_LABELS,
   grade: IRAP_GRADE_LABELS,
   delineation: IRAP_DELINEATION_LABELS,
-  condition: IRAP_CONDITION_LABELS,
   quality_of_curve: QUALITY_OF_CURVE_LABELS,
 };
 
@@ -1124,21 +1119,9 @@ function saveReview(module, category, note, button) {
     });
 }
 
-function doubleLineText(dl) {
-  // The scan only runs on a critical-grade segment (gap-check's only use of
-  // this value), so present=false is ambiguous without assessed: it means
-  // either "scanned, none found" or "never scanned here".
-  if (dl.assessed === false) return "not checked (grade not critical)";
-  if (dl.present) return `present (confidence ${dl.confidence.toFixed(2)})`;
-  return "absent";
-}
-
 function signsBlock(segment) {
   if (!segment.signs || !segment.signs.length) {
-    const dl = segment.double_line || {};
-    return `<p class="metrics">No signs accepted in this segment. `
-         + `Double line: ${doubleLineText(dl)}`
-         + `</p>`;
+    return `<p class="metrics">No signs accepted in this segment.</p>`;
   }
   return `<table><tr><th>sign</th><th>confidence</th><th>distance along route</th></tr>`
        + segment.signs.map((sign) =>
@@ -1215,7 +1198,6 @@ document.addEventListener("click", (event) => {
 // page does not know falls back to gapcheck.py's own text.
 const RULE_TITLE = {
   curve_warning_incomplete: "Curve warning incomplete",
-  grade_overtaking_control_missing: "No overtaking control on a critical grade",
   lane_marking_poor: "Lane markings hard to see",
 };
 // The warning sign JKR ATJ 2B/85 cl. 2.3 names for the series (gapcheck.py).
@@ -1262,10 +1244,6 @@ function recommendationText(rec) {
          + `reach the visibility threshold (Weber contrast ${trigger.contrast_threshold}). Check on site, then repaint the centre `
          + `and edge lines, or mark them where the road has none. The detector cannot tell a worn line `
          + `from the edge of an unmarked road.`;
-  } else if (rec.rule === "grade_overtaking_control_missing") {
-    const grade = trigger.grade_pct ? ` (${trigger.grade_pct.toFixed(1)}%)` : "";
-    text = `This segment has a critical grade${grade}, and no overtaking control `
-         + `was detected: neither a No overtaking sign nor a double centre line.`;
   } else {
     text = rec.text;
   }

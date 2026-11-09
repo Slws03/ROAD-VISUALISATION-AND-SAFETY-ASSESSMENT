@@ -158,8 +158,6 @@ def test_runner_output_reaches_gap_check_as_a_sign_record(tmp_path):
         segments,
         DetectionSet(sign={first.frame_id: accepted, marginal_frame.frame_id: marginal}),
         cfg,
-        image_root=tmp_path,
-        grade_results=[],
     )
 
     signs = [sign for result in results for sign in result.signs]

@@ -18,7 +18,6 @@ from irap_screening.config import load_config
 from irap_screening.io.detections import load_detections
 from irap_screening.io.schema import Frame, LaneInstance
 from irap_screening.modules.lane import weber_contrast_at
-from irap_screening.modules.marking import scan_near_lane_point
 from irap_screening.runners.lane import (
     RawFrame,
     RawLane,
@@ -95,9 +94,9 @@ def test_off_frame_x_is_passed_through_unclamped():
     """CLRerNet extends curved lanes past the image edge; those points are kept.
 
     Clamping would invent a position on the frame border and feed it to the
-    contrast sampler as if a marking were there. Both consumers --
-    lane.weber_contrast_at and marking.scan_near_lane_point -- bounds-check and
-    return None, so an out-of-frame point is dropped rather than measured. The
+    contrast sampler as if a marking were there. The consumer,
+    lane.weber_contrast_at, bounds-checks and returns None, so an out-of-frame
+    point is dropped rather than measured. The
     exporter's job is to report where the detector put the point.
     """
     points = to_original_points([(-0.1, 0.9), (1.2, 0.9)], SOURCE_WH, _meta())
@@ -107,14 +106,12 @@ def test_off_frame_x_is_passed_through_unclamped():
 
 
 def test_off_frame_points_are_dropped_by_the_consumers_not_measured():
-    """Pins the assumption the previous test relies on, in the consumers themselves."""
+    """Pins the assumption the previous test relies on, in the consumer itself."""
     gray = np.full((1080, 1920), 100, dtype=np.uint8)
     cfg = load_config()
 
     assert weber_contrast_at(gray, -192.0, 500.0, cfg.lane.bg_window) is None
     assert weber_contrast_at(gray, 2304.0, 500.0, cfg.lane.bg_window) is None
-    assert scan_near_lane_point(gray, -192.0, 500.0, cfg) is None
-    assert scan_near_lane_point(gray, 2304.0, 500.0, cfg) is None
 
 
 def test_dump_above_the_config_threshold_is_rejected(tmp_path):
