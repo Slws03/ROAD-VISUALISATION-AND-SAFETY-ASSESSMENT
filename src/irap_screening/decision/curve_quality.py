@@ -12,6 +12,13 @@ curve. Of those this pipeline sees signs and delineation only, so:
   own; this is deliberately looser than gap-check rule 1, which recommends
   both.
 
+The manual does not say where a sign must stand to count, so the searches are
+gap-check's: the advance sign 230 m (JKR ATJ 2B/85) before the entry of the
+curve, pieced together here from segments, and chevrons within the segment.
+Both reach curve_sign_lookahead_m further back, since a sign is placed at the
+photo it was detected in, taken before the camera reached it. Unlike
+gap-check, a stretch the photos do not cover counts as unsigned.
+
 Sight distance, lighting, advisory speed plates and telemetry-based speed
 behaviour are not observed, so a curve coded Adequate here may still be Poor
 on site.
@@ -84,13 +91,16 @@ def code_quality_of_curve(
 
         # Same placement as rule 1: one sign at the curve's entry.
         window_centre = spans[sid][0] - cfg.gapcheck.curve_sign_distance_m
+        tolerance = cfg.gapcheck.curve_sign_tolerance_m
+        lookahead = cfg.gapcheck.curve_sign_lookahead_m
         advance = any(
             sign.cls in ADVANCE_BEND_CLASSES
-            and abs(sign.at_m - window_centre) <= cfg.gapcheck.curve_sign_tolerance_m
+            and window_centre - tolerance - lookahead <= sign.at_m <= window_centre + tolerance
             for sign in signs
         )
         chevron = any(
-            sign.cls == CHEVRON_CLASS and segment.start_m <= sign.at_m < segment.end_m
+            sign.cls == CHEVRON_CLASS
+            and segment.start_m - lookahead <= sign.at_m < segment.end_m
             for sign in signs
         )
         if advance or chevron:

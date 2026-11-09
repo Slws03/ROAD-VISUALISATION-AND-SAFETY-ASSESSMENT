@@ -116,6 +116,16 @@ def test_chevron_alone_is_adequate():
     assert codes["R01-0004"] == 1
 
 
+def test_signs_photographed_before_their_place_still_count():
+    """The camera sees a sign ahead: the advance sign belongs at 170 m and the
+    chevron on the curve from 400 m, but their photos are taken earlier."""
+    segments = _segments()
+    results = _results(segments, category={"R01-0004": 3})
+    assert _codes(segments, results, [_sign("Bend", 100.0)])["R01-0004"] == 1
+    assert _codes(segments, results, [_sign("Chevron", 360.0)])["R01-0004"] == 1
+    assert _codes(segments, results, [_sign("Chevron", 340.0)])["R01-0004"] == 2
+
+
 def test_poor_delineation_forces_poor_even_when_signed():
     """Manual p.52: where delineation is poor, quality of curve is also poor."""
     segments = _segments()
