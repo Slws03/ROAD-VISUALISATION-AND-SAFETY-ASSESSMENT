@@ -13,6 +13,16 @@ bearing stand-in.
 - Mount tilt: the mean gravity direction is rotated onto vertical, and the
   same rotation is applied to the gyro, so gz stays the yaw rate about the
   vertical. Gyro bias is left in: the curvature module estimates it.
+- That mean is only vertical if the drive is level on average. kg_sinjok
+  climbs 190 m, and levelled on its whole drive it read its flat village
+  road as -6 to -11 %. So the levelling is then redone from flat road alone:
+  every stretch of at least 300 m whose GPS altitude stays within 3 m, with
+  no fix-to-fix step over 1.5 m and speed at least 3 m/s, and on it only
+  steady (|dv/dt| < 0.5 m/s^2), straight (|gz| < 0.05 rad/s) samples, with
+  dv/dt taken off x and v*gz off y. GPS altitude only picks the road; it
+  never enters the grade. A drive with no such road keeps the whole-drive
+  levelling. On GSDC (ground truth) this took the segment grade RMSE from
+  1.10 to 0.80 %; one flat stretch alone was too noisy (D:/FYP/grade_review).
 - The gyro is interpolated onto the accelerometer's timestamps; the two
   streams run at the same rate but are stamped separately.
 - Spot photos ship without an extension (WebP or JPEG); OpenCV reads either
@@ -36,7 +46,12 @@ import numpy as np
 from scipy.signal import savgol_filter
 from scipy.spatial.transform import Rotation
 
+from irap_screening.io.align import haversine_m
 from neoun_to_route import parse_time, write_spots
+
+FLAT_MIN_M = 300.0
+FLAT_MAX_RANGE_M = 3.0
+FLAT_MAX_STEP_M = 1.5
 
 
 def iso_time(raw: str) -> float:
@@ -61,6 +76,46 @@ def by_time(rows: list[dict[str, str]]) -> tuple[np.ndarray, list[dict[str, str]
 
 def xyz(rows: list[dict[str, str]]) -> np.ndarray:
     return np.array([[float(r["x"]), float(r["y"]), float(r["z"])] for r in rows])
+
+
+def flat_levelling(
+    t_imu: np.ndarray, accel: np.ndarray, gyro: np.ndarray,
+    t_gps: np.ndarray, pos: list[dict[str, str]], speed: np.ndarray,
+) -> tuple[Rotation | None, float]:
+    """Rotation putting the specific force on flat, steady, straight road onto
+    vertical, and the metres of flat road it came from; None if too little."""
+    lat = np.array([float(r["point.coordinates[1]"]) for r in pos])
+    lon = np.array([float(r["point.coordinates[0]"]) for r in pos])
+    alt = np.array([float(r["point.coordinates[2]"] or "nan") for r in pos])
+    steps = [haversine_m(lat[k], lon[k], lat[k + 1], lon[k + 1]) for k in range(len(lat) - 1)]
+    dist = np.concatenate([[0.0], np.cumsum(steps)])
+
+    spans, j = [], 0
+    for i in range(len(dist)):
+        j = max(j, i)
+        while j < len(dist) and dist[j] - dist[i] < FLAT_MIN_M:
+            j += 1
+        if j >= len(dist):
+            break
+        a = alt[i : j + 1]
+        if (np.isfinite(a).all() and (speed[i : j + 1] >= 3.0).all()
+                and np.abs(np.diff(a)).max() <= FLAT_MAX_STEP_M
+                and a.max() - a.min() <= FLAT_MAX_RANGE_M):
+            spans.append((dist[i], dist[j]))
+
+    d_imu = np.interp(t_imu, t_gps, dist)
+    on = np.zeros(t_imu.size, bool)
+    for a, b in spans:
+        on |= (d_imu >= a) & (d_imu <= b)
+    v = np.interp(t_imu, t_gps, speed)
+    dvdt = np.gradient(v, t_imu)
+    use = on & (np.abs(dvdt) < 0.5) & (np.abs(gyro[:, 2]) < 0.05)
+    if use.sum() < 50:
+        return None, 0.0
+    force = [np.mean(accel[use, 0] - dvdt[use]),
+             np.mean(accel[use, 1] - v[use] * gyro[use, 2]), np.mean(accel[use, 2])]
+    rotation, _ = Rotation.align_vectors([[0.0, 0.0, 1.0]], [force])
+    return rotation, float(np.diff(d_imu)[on[1:]].sum())
 
 
 def write_sensors(
@@ -103,6 +158,11 @@ def write_sensors(
     tilt = float(np.degrees(np.arccos(mean_g[2] / np.linalg.norm(mean_g))))
     level, _ = Rotation.align_vectors([[0.0, 0.0, 1.0]], [mean_g])
     accel, gyro = level.apply(accel), level.apply(gyro)
+    flat, flat_m = flat_levelling(t_imu, accel, gyro, t_gps, pos, speed)
+    if flat is not None:
+        accel, gyro = flat.apply(accel), flat.apply(gyro)
+        tilt = float(np.degrees(np.arccos((flat * level).inv().apply([0.0, 0.0, 1.0])[2])))
+    levelled_on = f"flat road {flat_m:.0f} m" if flat is not None else "whole drive"
 
     with (out / "imu.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
@@ -110,7 +170,7 @@ def write_sensors(
         for t, a, g in zip(t_imu, accel, gyro, strict=True):
             writer.writerow([datetime.fromtimestamp(t, UTC).isoformat(), *a, *g])
 
-    return corr, tilt, (t_gps[0], t_gps[-1])
+    return corr, tilt, levelled_on, (t_gps[0], t_gps[-1])
 
 
 def route_name(meta: dict, names: dict[str, str]) -> str:
@@ -145,14 +205,15 @@ def main() -> None:
         out = args.out / route_name(meta, names)
         (out / "detections").mkdir(parents=True, exist_ok=True)
 
-        corr, tilt, span = write_sensors(out, pos[meta["id"]], acc[meta["id"]], rot[meta["id"]])
+        corr, tilt, levelled_on, span = write_sensors(
+            out, pos[meta["id"]], acc[meta["id"]], rot[meta["id"]])
         spots = [
             (parse_time(s["createdAt"]), report / "spots" / s["photo"]["name"], s["id"])
             for s in meta["spots"]
         ]
         frames = write_spots(spots, out, span, args.quality)
         print(f"{out.name} ({meta['name']}): forward corr {corr:.2f}, "
-              f"tilt {tilt:.1f} deg, frames {frames}")
+              f"tilt {tilt:.1f} deg (levelled on {levelled_on}), frames {frames}")
 
 
 if __name__ == "__main__":

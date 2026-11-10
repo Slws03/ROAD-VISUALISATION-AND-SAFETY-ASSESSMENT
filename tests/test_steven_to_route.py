@@ -26,12 +26,17 @@ def _stamp(t: float) -> str:
     return datetime.fromtimestamp(T0 + t, UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-def _export(root: Path) -> None:
+def _export(root: Path, duration: float = 60.0, yaw: float = YAW, grade=None) -> None:
+    """Landscape-mounted drive at about 11 m/s; `grade(t)` (fraction) tilts the road."""
     rid = "r1"
-    t_gps = np.arange(0.0, 60.0, 1.0)
-    t_imu = np.arange(0.0, 60.0, 0.1)
+    t_gps = np.arange(0.0, duration, 1.0)
+    t_imu = np.arange(0.0, duration, 0.1)
     speed = lambda t: 8 + 2 * np.sin(2 * np.pi * t / 15)  # noqa: E731
     accel = lambda t: 2 * 2 * np.pi / 15 * np.cos(2 * np.pi * t / 15)  # noqa: E731
+    pitch = np.arctan(grade(t_imu)) if grade else np.zeros(t_imu.size)
+    step = 1e-4 * 111_195.0  # metres per GPS fix along the meridian
+    climb = np.tan(np.interp(t_gps[1:], t_imu, pitch)) * step
+    altitude = 30.0 + np.concatenate([[0.0], np.cumsum(climb)])
 
     def write(name, header, rows):
         with (root / name).open("w", newline="", encoding="utf-8") as handle:
@@ -42,13 +47,16 @@ def _export(root: Path) -> None:
     write("positions.csv",
           ["_id", "date", "reportId", "point.coordinates[0]", "point.coordinates[1]",
            "point.coordinates[2]", "speedMeta.speed", "bearingMeta.bearing"],
-          [[i, _stamp(t), rid, 110.0, 1.5 + t * 1e-4, 30.0, speed(t), 0] for i, t in enumerate(t_gps)])
-    # Landscape mount: gravity on phone x, forward is -z.
+          [[i, _stamp(t), rid, 110.0, 1.5 + t * 1e-4, h, speed(t), 0]
+           for i, (t, h) in enumerate(zip(t_gps, altitude, strict=True))])
+    # Landscape mount: gravity on phone x, forward is -z. On a grade the
+    # specific force tips forward by g sin(pitch).
     write("accelerations.csv", ["_id", "date", "reportId", "x", "y", "z"],
-          [[i, _stamp(t), rid, 9.81, 0.0, -accel(t)] for i, t in enumerate(t_imu)])
+          [[i, _stamp(t), rid, 9.81 * np.cos(p), 0.0, -(accel(t) + 9.81 * np.sin(p))]
+           for i, (t, p) in enumerate(zip(t_imu, pitch, strict=True))])
     # Stamped apart from the accelerometer, as in the real export.
     write("rotations.csv", ["_id", "date", "reportId", "x", "y", "z"],
-          [[i, _stamp(t + 0.05), rid, YAW, 0.0, 0.0] for i, t in enumerate(t_imu)])
+          [[i, _stamp(t + 0.05), rid, yaw, 0.0, 0.0] for i, t in enumerate(t_imu)])
 
     spots = root / "reports" / rid / "spots"
     spots.mkdir(parents=True)
@@ -79,6 +87,24 @@ def test_yaw_rate_lands_on_gz_and_frames_are_written(tmp_path, monkeypatch):
                        8 + 2 * np.sin(2 * np.pi * np.arange(60.0) / 15))))[0, 1] > 0.9
     assert (route / "frames" / "f_000000.jpg").exists()
     assert FixtureSource(route).gps()[0].bearing_deg == 0.0
+
+
+def test_a_route_that_climbs_is_levelled_on_its_flat_road(tmp_path, monkeypatch):
+    # Flat for a minute, then a 10 % climb: the drive's mean gravity is tipped
+    # by the climb, so levelling on it would read the flat road as -5 %.
+    export, out = tmp_path / "export", tmp_path / "routes"
+    export.mkdir()
+    _export(export, duration=120.0, yaw=0.0, grade=lambda t: np.where(t < 60.0, 0.0, 0.10))
+    monkeypatch.setattr(sys, "argv", ["x", "--export", str(export), "--out", str(out)])
+    steven.main()
+
+    with (out / "abc12345" / "imu.csv").open(newline="", encoding="utf-8") as handle:
+        imu = np.array([[float(v) for v in list(r.values())[1:]] for r in csv.DictReader(handle)])
+    t = np.arange(0.0, 120.0, 0.1)[: len(imu)]
+    forward = imu[:, 0] - 2 * 2 * np.pi / 15 * np.cos(2 * np.pi * t / 15)
+    grade = forward / np.hypot(imu[:, 1], imu[:, 2]) * 100.0
+    assert abs(grade[(t > 5) & (t < 55)].mean()) < 1.0
+    assert abs(grade[(t > 65) & (t < 115)].mean() - 10.0) < 1.0
 
 
 def test_a_listed_road_name_prefixes_the_route(tmp_path):
