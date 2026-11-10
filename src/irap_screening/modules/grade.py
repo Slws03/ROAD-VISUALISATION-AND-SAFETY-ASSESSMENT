@@ -27,6 +27,16 @@ degrees on KITTI, and a bracket-mounted phone's 10 Hz pitch rate is mount
 vibration aliased into the band, which read 208 of 266 Samarahan segments as
 critical (D:/FYP/grade_review). The gyro is not read here.
 
+The three axes are averaged over the window before the pitch is taken, not
+the per-sample pitch. A rocking mount shakes the forward and vertical axes
+together, and the mean of their per-sample ratio falls short of the ratio of
+their means by about cov(ax, az)/g^2: a downgrade that grows with vibration.
+Against 7 GSDC 2023 phone drives (NovAtel SPAN altitude as reference, 2,711
+segments) this took segment RMSE from 1.85 to 1.10 percent and false critical
+segments from 30 to 6, with the 34 true ones found either way; KITTI 0042 was
+unchanged (0.26 degrees RMSE). Those drives carry SPAN speed, cleaner than a
+phone's GPS, so the dv/dt correction was tested at its best.
+
 A segment is coded only from windows lying wholly inside it, as curvature is,
 so a slope in the next segment cannot set this one's grade.
 
@@ -81,8 +91,11 @@ def pitch_series(route: AlignedRoute, cfg: Settings) -> np.ndarray:
     """Pitch in radians, one value per IMU sample.
 
     The accelerometer's pitch with the vehicle's own acceleration removed,
-    averaged over the window_m of road centred on each sample. Near either end
-    of the route the window holds whatever samples it can.
+    over the window_m of road centred on each sample: each axis is averaged
+    over the window first, then one pitch is taken from the means. Taking the
+    pitch per sample and averaging that would turn vibration shared by the
+    forward and vertical axes into a downgrade (see the module docstring).
+    Near either end of the route the window holds whatever samples it can.
     """
     if not route.imu:
         return np.zeros(0)
@@ -93,15 +106,19 @@ def pitch_series(route: AlignedRoute, cfg: Settings) -> np.ndarray:
 
     # Remove the vehicle's own longitudinal acceleration, which the sensor
     # reports in the same channel as the gravity projection.
-    accel_pitch = _accel_pitch(ax - longitudinal_accel(route), ay, az)
+    ax = ax - longitudinal_accel(route)
 
     # IMU distance is interpolated from the GPS track, so it never decreases.
     dist = route.imu_dist_m
     half = cfg.grade.window_m / 2.0
     lo = np.searchsorted(dist, dist - half, side="left")
     hi = np.searchsorted(dist, dist + half, side="right")
-    total = np.concatenate([[0.0], np.cumsum(accel_pitch)])
-    return (total[hi] - total[lo]) / (hi - lo)
+
+    def window_mean(values: np.ndarray) -> np.ndarray:
+        total = np.concatenate([[0.0], np.cumsum(values)])
+        return (total[hi] - total[lo]) / (hi - lo)
+
+    return _accel_pitch(window_mean(ax), window_mean(ay), window_mean(az))
 
 
 def gps_grade_series(route: AlignedRoute, cfg: Settings) -> np.ndarray | None:

@@ -288,6 +288,24 @@ def test_accelerometer_vibration_is_averaged_out():
     assert all(abs(r.metrics["grade_pct"]) < 2.0 for r in results)
 
 
+def test_vibration_shared_by_the_axes_does_not_read_as_a_downgrade():
+    """A rocking mount shakes the forward and vertical channels together.
+
+    Averaging atan2 sample by sample turns that shared vibration into a bias:
+    the mean of ax/az falls short of mean(ax)/mean(az) by about cov(ax, az)/g^2,
+    several percent on a level road here. GSDC phones read 23 of 30 false
+    critical segments this way (D:/FYP/grade_review). Averaging the components
+    first leaves nothing to rectify. The shake alternates sign so that its own
+    mean over a window is zero: only the rectification is under test.
+    """
+    frames, gps, imu = straight_route(length_m=500.0)
+    shake = np.where(np.arange(len(imu)) % 2 == 0, 3.0, -3.0)
+    imu = [s.model_copy(update={"ax": s.ax + 0.5 * v, "az": s.az + v})
+           for s, v in zip(imu, shake, strict=True)]
+    results = _analyse(frames, gps, imu)
+    assert all(abs(r.metrics["grade_pct"]) < 1.0 for r in results)
+
+
 def test_a_slope_in_the_next_segment_does_not_set_this_ones_grade():
     """A 20% climb starts 2 m into the second segment; the first stays level.
 
