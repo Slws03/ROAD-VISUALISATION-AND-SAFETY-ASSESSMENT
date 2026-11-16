@@ -251,3 +251,17 @@ def test_adjacent_poor_marking_is_one_stretch_with_one_recommendation():
 def test_poor_marking_on_a_critical_curve_gets_its_own_recommendation():
     rules = sorted(r.rule for r in _check(delineation=Flag.CRITICAL)["R01-0005"])
     assert rules == ["curve_warning_incomplete", "lane_marking_poor"]
+
+def test_a_stretch_poor_by_line_count_says_so():
+    """lane.py grades a segment poor when most photos show under two lines, however
+    clear those lines are; the text must not read as if the lines were faint alone."""
+    segments = _segments()
+    results = _module_results(segments, curvature=Flag.NORMAL, delineation=Flag.CRITICAL, targets=(4,))
+    results["delineation"][4] = results["delineation"][4].model_copy(update={"metrics": {
+        "lines_visible": 6.0, "lines_total": 9.0, "median_lines_per_frame": 1.0}})
+    recs = run_gapcheck(segments, results, _existence(segments), CFG, [], PHOTOS)
+
+    rec = recs["R01-0004"][0]
+    assert rec.trigger["segments_few_lines"] == 1.0
+    assert "fewer than two lines" in rec.text
+    assert "fewer than two" not in _check(curvature=Flag.NORMAL, delineation=Flag.CRITICAL, targets=(4,))["R01-0004"][0].text

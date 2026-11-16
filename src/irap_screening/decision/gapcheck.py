@@ -230,6 +230,19 @@ def _marking_recommendation(
         )
 
     visible, total = summed("lines_visible"), summed("lines_total")
+    # Segments condemned by the line count (lane.py), whatever their contrast.
+    medians = [
+        _metric_of(module_results, "delineation", s.segment_id, "median_lines_per_frame")
+        for s in stretch
+    ]
+    few = sum(1 for m in medians if m is not None and m < cfg.lane.min_lines_per_frame)
+    lead = "Most photos" if few == len(stretch) else f"In {few} of its {len(stretch)} segments, most photos"
+    few_text = (
+        f" {lead} show fewer than two lines, so centre and edge lines "
+        "cannot both be there."
+        if few
+        else ""
+    )
     start_m, end_m = stretch[0].start_m, stretch[-1].end_m
     return Recommendation(
         rule="lane_marking_poor",
@@ -241,14 +254,15 @@ def _marking_recommendation(
             "segments": float(len(stretch)),
             "lines_visible": visible,
             "lines_total": total,
+            "segments_few_lines": float(few),
             "contrast_threshold": cfg.lane.weber_adequate,
         },
         missing=["visible_marking"],
         present=[],
         text=(
             f"Stretch D{number:02d} ({start_m:.0f}-{end_m:.0f} m): {visible:.0f} of "
-            f"{total:.0f} lines detected across its photos clearly visible. Repaint, or mark where "
-            "there is none, after a site check."
+            f"{total:.0f} lines detected across its photos clearly visible.{few_text} Repaint, or mark "
+            "where there is none, after a site check."
         ),
     )
 

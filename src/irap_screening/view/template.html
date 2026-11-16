@@ -562,6 +562,8 @@ const METRIC_TEXT = {
   pitch_deg: (v) => `Pitch ${v.toFixed(1)}°`,
   // The segment's minimum across its frames (lane.py), hence "lowest".
   weber_contrast: (v) => `Lowest marking contrast ${v.toFixed(2)} (Weber)`,
+  // Median over the segment's photos; under 2 grades poor (lane.py).
+  median_lines_per_frame: (v) => `${v} line${v === 1 ? "" : "s"} detected in a typical photo`,
 };
 // Shown elsewhere (iRAP category column) or folded into one phrase below.
 const UNLISTED_METRICS = new Set(
@@ -1241,7 +1243,13 @@ function recommendationText(rec) {
     text = `This segment is part of ${where} from ${Math.round(trigger.start_m)} m to `
          + `${Math.round(trigger.end_m)} m along the route where lane markings are hard to see: `
          + `${Math.round(trigger.lines_visible)} of the ${Math.round(trigger.lines_total)} lines detected across its photos `
-         + `reach the visibility threshold (Weber contrast ${trigger.contrast_threshold}). Check on site, then repaint the centre `
+         + `reach the visibility threshold (Weber contrast ${trigger.contrast_threshold}). `
+         + (trigger.segments_few_lines
+           ? (trigger.segments_few_lines === trigger.segments ? `Most photos ` : `In ${Math.round(trigger.segments_few_lines)} of its segments, most photos `)
+             + `show fewer than two lines, `
+             + `so centre and edge lines cannot both be there. `
+           : ``)
+         + `Check on site, then repaint the centre `
          + `and edge lines, or mark them where the road has none. The detector cannot tell a worn line `
          + `from the edge of an unmarked road.`;
   } else {
