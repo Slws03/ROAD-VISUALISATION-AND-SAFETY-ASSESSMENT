@@ -49,8 +49,9 @@ class LaneSettings(_Section):
     clrernet_conf: float = Field(default=0.41, ge=0.0, le=1.0)
     contrast_percentile: float = Field(default=85.0, gt=0.0, le=100.0)
     min_detection_rate: float = Field(default=0.5, ge=0.0, le=1.0)
-    weber_adequate: float = Field(default=0.35, ge=0.0)
+    weber_adequate: float = Field(default=0.25, ge=0.0)
     min_visible_share: float = Field(default=0.5, gt=0.0, le=1.0)
+    min_lines_per_frame: float = Field(default=2.0, ge=0.0)
     bg_window: PositiveInt = 81
     peak_window_frac: float = Field(default=0.005, ge=0.0, lt=0.5)
 

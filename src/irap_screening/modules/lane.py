@@ -219,6 +219,7 @@ def analyse_lane(
         contrasts: list[float] = []
         evidence: list[str] = []
         detected_frames = 0
+        lines_per_frame: list[int] = []
 
         for frame_id in segment.frame_ids:
             record = detections.lane.get(frame_id)
@@ -228,6 +229,7 @@ def analyse_lane(
                 else []
             )
             lanes = [lane for lane in lanes if lane.conf >= cfg.lane.clrernet_conf]
+            lines_per_frame.append(len(lanes))
             if not lanes:
                 # A frame the detector could not resolve is not evidence that the
                 # road is unmarked. Scoring it as zero contrast and aggregating by
@@ -291,7 +293,14 @@ def analyse_lane(
 
         worst_contrast = float(min(contrasts))
         lines_visible = sum(c >= cfg.lane.weber_adequate for c in contrasts)
-        flag = _grade(lines_visible / len(contrasts), cfg)
+        median_lines = float(np.median(lines_per_frame))
+        # Fewer than two lines in a typical frame cannot be centre and edge
+        # markings both present (iRAP), however clear the one line is.
+        flag = (
+            Flag.CRITICAL
+            if median_lines < cfg.lane.min_lines_per_frame
+            else _grade(lines_visible / len(contrasts), cfg)
+        )
         results.append(
             ModuleResult(
                 module=MODULE_NAME,
@@ -301,6 +310,7 @@ def analyse_lane(
                     "weber_contrast": worst_contrast,
                     "lines_visible": float(lines_visible),
                     "lines_total": float(len(contrasts)),
+                    "median_lines_per_frame": median_lines,
                     "detection_rate": detection_rate,
                     "detected_frames": float(detected_frames),
                     "total_frames": float(total_frames),

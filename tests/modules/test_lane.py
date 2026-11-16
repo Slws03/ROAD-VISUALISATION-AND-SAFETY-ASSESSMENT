@@ -23,6 +23,9 @@ from tests.factories import straight_route
 
 BG_LEVEL = 100
 LINE_X = 320
+# These fixtures draw one line per frame to test contrast grading; the
+# two-line minimum is switched off here and tested on its own below.
+ONE_LINE = ["lane.min_lines_per_frame=0"]
 
 
 def _write_frame(path: Path, line_level: int | None) -> None:
@@ -57,7 +60,7 @@ def _build(tmp_path: Path, line_level: int | None, line_present: bool = True):
     for frame in frames:
         _write_frame(tmp_path / frame.path, line_level)
     route = align_route(frames, gps, imu)
-    cfg = load_config()
+    cfg = load_config(overrides=ONE_LINE)
     segments = build_segments(route, cfg)
     detections = DetectionSet(
         lane={f.frame_id: _lane_record(f.frame_id, line_present) for f in frames}
@@ -109,7 +112,7 @@ def test_mid_contrast_marking_is_critical(tmp_path: Path):
     ground, and this project no longer keeps its own -- a marking faded past
     "clearly visible" grades critical/poor rather than a separate watch band.
     """
-    results = analyse_lane(*_build(tmp_path, line_level=128), image_root=tmp_path)
+    results = analyse_lane(*_build(tmp_path, line_level=120), image_root=tmp_path)
     assert results[0].flag is Flag.CRITICAL
 
 
@@ -171,7 +174,7 @@ def _mixed(tmp_path: Path, faded) -> list:
     for index, frame in enumerate(frames):
         _write_frame(tmp_path / frame.path, 110 if faded(index) else 200)
     route = align_route(frames, gps, imu)
-    cfg = load_config()
+    cfg = load_config(overrides=ONE_LINE)
     segments = build_segments(route, cfg)
     detections = DetectionSet(
         lane={f.frame_id: _lane_record(f.frame_id, True) for f in frames}
@@ -297,7 +300,7 @@ def _build_dashed(tmp_path: Path, paint_level: int):
     for frame in frames:
         _dashed_frame(tmp_path / frame.path, paint_level)
     route = align_route(frames, gps, imu)
-    cfg = load_config()
+    cfg = load_config(overrides=ONE_LINE)
     return (
         route,
         build_segments(route, cfg),
@@ -359,7 +362,7 @@ def _build_partial(tmp_path: Path, keep):
     for frame in frames:
         _write_frame(tmp_path / frame.path, line_level=240)
     route = align_route(frames, gps, imu)
-    cfg = load_config()
+    cfg = load_config(overrides=ONE_LINE)
     return (
         route,
         build_segments(route, cfg),
@@ -400,8 +403,41 @@ def test_sparse_detection_is_not_assessed_rather_than_scored(tmp_path: Path):
 
 def test_the_detection_floor_is_configurable(tmp_path: Path):
     route, segments, detections, _ = _build_partial(tmp_path, keep=lambda i: i % 5 == 0)
-    cfg = load_config(overrides=["lane.min_detection_rate=0.1"])
+    cfg = load_config(overrides=["lane.min_detection_rate=0.1", *ONE_LINE])
 
     results = analyse_lane(route, segments, detections, cfg, image_root=tmp_path)
 
     assert results[0].flag is Flag.NORMAL
+
+def test_one_clear_line_alone_is_poor(tmp_path: Path):
+    """iRAP asks for centre and edge markings; a lone line, however bright, is not both."""
+    route, segments, detections, _ = _build(tmp_path, line_level=240)
+    cfg = load_config()
+
+    results = analyse_lane(route, segments, detections, cfg, image_root=tmp_path)
+
+    assert results[0].flag is Flag.CRITICAL
+    assert results[0].metrics["median_lines_per_frame"] == 1.0
+    assert results[0].metrics["lines_visible"] == results[0].metrics["lines_total"]
+
+
+def test_two_clear_lines_per_frame_pass_the_line_count(tmp_path: Path):
+    frames, gps, imu = straight_route(length_m=200.0)
+    for frame in frames:
+        image = np.full((480, 640, 3), BG_LEVEL, dtype=np.uint8)
+        image[:, 197:204] = 240
+        image[:, 437:444] = 240
+        (tmp_path / frame.path).parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(tmp_path / frame.path), image)
+    route = align_route(frames, gps, imu)
+    cfg = load_config()
+    detections = DetectionSet(lane={
+        f.frame_id: _lane_record(f.frame_id, True).model_copy(update={"instances": [
+            _vertical(f"{f.frame_id}#lane#0", 200.0), _vertical(f"{f.frame_id}#lane#1", 440.0)]})
+        for f in frames
+    })
+
+    results = analyse_lane(route, build_segments(route, cfg), detections, cfg, image_root=tmp_path)
+
+    assert results[0].flag is Flag.NORMAL
+    assert results[0].metrics["median_lines_per_frame"] == 2.0

@@ -54,7 +54,13 @@ lane:
                                  # not_assessed: too little evidence to grade the
                                  # road, and a detector limitation must not be
                                  # reported as a road defect.
-  weber_adequate: 0.35           # PROVISIONAL. Two bands, not three: iRAP's
+  weber_adequate: 0.25           # Fitted 2026-11-16 to the author's labels on 139
+                                 # segments (iRAP Coding Manual wording; LOO picks
+                                 # 0.22, accuracy flat 0.20-0.25, 0.25 keeps more
+                                 # Poor). 8-bit phone JPEG caps Weber on pale road
+                                 # (bg 200 -> max 0.28), so literature values on
+                                 # linear luminance do not carry over.
+                                 # D:/FYP/delin_audit/irap_relabel. Two bands, not three: iRAP's
                                  # Delineation is Adequate/Poor, and this
                                  # project keeps only its own equivalent
                                  # (lane marking visibility, not the full
@@ -68,6 +74,12 @@ lane:
                                  # not every line. Delineation follows AiRAP,
                                  # determined from road lines/markings/lanes
                                  # only; hazard warning signs are not assessed.
+  min_lines_per_frame: 2         # Median detected lines per frame (frames with
+                                 # none count as 0) below this -> Poor. A lone
+                                 # clear line, or a kerb found on an unmarked
+                                 # road, would otherwise pass the share test.
+                                 # Accuracy 0.806 -> 0.848 on the author's labels;
+                                 # no 3-line segment had a median under 2.
   bg_window: 81                  # background window for contrast sampling
   peak_window_frac: 0.005        # PROVISIONAL. The marking's peak is sought
                                  # this share of the image width either side
