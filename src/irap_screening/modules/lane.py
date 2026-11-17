@@ -10,10 +10,11 @@ opposite of the curvature and grade thresholds.
 
 MODULE_NAME is "delineation", not "lane": this is the report-facing key
 gap-check and the viewer key their output on, and iRAP's Delineation
-attribute is what a reader will look for it under. It stays a partial
-match, not a false one -- this module only ever measures marking
-visibility, never the hazard-warning-sign half of the real attribute, and
-the viewer says so next to it. Everything internal to this file (the
+attribute is what a reader will look for it under. It follows AiRAP, whose
+Delineation is "Determined based on recognition of road lines/markings/lanes":
+the Coding Manual's hazard-warning-sign half ("Signs warning of severe
+hazards, and centre and edge markings are generally present and visible") is
+not assessed, and the viewer says so next to it. Everything internal to this file (the
 functions, cfg.lane.*, LaneInstance) keeps the more specific "lane"
 naming, since that is what it actually computes.
 """
@@ -35,14 +36,31 @@ MODULE_NAME = "delineation"  # external/report key -- see module docstring;
                               # cfg.lane.*) stay lane-marking-specific.
 
 
+# Sides the background window can be taken from: the full strip around the
+# point, or only the pixels to its right or left, past the peak window.
+BOTH, RIGHT, LEFT = "both", "right", "left"
+_MIN_SIDE_PX = 8  # fewer pixels than this on the chosen side is no background
+
+
 def weber_contrast_at(
-    gray: np.ndarray, x: float, y: float, bg_window: int
+    gray: np.ndarray,
+    x: float,
+    y: float,
+    bg_window: int,
+    peak_frac: float = 0.0,
+    side: str = BOTH,
 ) -> float | None:
     """Weber contrast C = (I - I_bg) / I_bg at one lane point.
 
     I is the peak intensity in a small neighbourhood around the point; I_bg is
     the median of the surrounding horizontal window, which is dominated by road
-    surface rather than by the marking itself.
+    surface rather than by the marking itself. The neighbourhood is
+    peak_frac of the image width either side, never under 4 px: CLRerNet's
+    points can sit several pixels off the paint, and a fixed width misses it
+    on a large frame where it would not on a small one.
+
+    side RIGHT or LEFT takes I_bg from that half of the window only, beyond
+    the peak neighbourhood: for an edge line, whose other half is verge.
     """
     height, width = gray.shape[:2]
     col = int(round(x))
@@ -51,28 +69,119 @@ def weber_contrast_at(
         return None
 
     half = max(1, bg_window // 2)
-    lo = max(0, col - half)
-    hi = min(width, col + half + 1)
-    strip = gray[row, lo:hi].astype(float)
-    if strip.size == 0:
+    reach = max(4, int(round(peak_frac * width)))
+    if side == RIGHT:
+        strip = gray[row, min(width, col + reach + 1):min(width, col + half + 1)]
+    elif side == LEFT:
+        strip = gray[row, max(0, col - half):max(0, col - reach)]
+    else:
+        strip = gray[row, max(0, col - half):min(width, col + half + 1)]
+    if strip.size < (_MIN_SIDE_PX if side != BOTH else 1):
         return None
 
-    local_lo = max(0, col - 4)
-    local_hi = min(width, col + 5)
+    local_lo = max(0, col - reach)
+    local_hi = min(width, col + reach + 1)
     marking = float(gray[row, local_lo:local_hi].astype(float).max())
-    background = float(np.median(strip))
+    background = float(np.median(strip.astype(float)))
     if background <= 1e-6:
         return None
     return (marking - background) / background
 
 
-def _grade(contrast: float, cfg: Settings) -> Flag:
-    """Lower contrast is worse. Two bands, matching iRAP's Delineation
-    Adequate/Poor: no separate watch band -- a threshold for routing
-    borderline segments to manual/LLM review, if wanted later, can be tuned
-    independently of this flag rather than needing its own hard-coded band.
+def lane_contrast(
+    gray: np.ndarray, lane: LaneInstance, cfg: Settings, side: str = BOTH
+) -> float | None:
+    """One line's contrast: a high percentile of its points' Weber contrast.
+
+    A high percentile, not the median: see contrast_percentile in the
+    configuration for why a dashed marking demands it. None when no point
+    lands inside the frame.
     """
-    return Flag.NORMAL if contrast >= cfg.lane.weber_adequate else Flag.CRITICAL
+    samples = [
+        value
+        for value in (
+            weber_contrast_at(
+                gray, x, y, cfg.lane.bg_window, cfg.lane.peak_window_frac, side
+            )
+            for x, y in lane.points
+        )
+        if value is not None
+    ]
+    return float(np.percentile(samples, cfg.lane.contrast_percentile)) if samples else None
+
+
+def _bottom_x(lane: LaneInstance, height: int, width: int) -> float:
+    """Where the line, fitted straight, meets the bottom row, as a share of the width."""
+    points = np.asarray(lane.points, dtype=float)
+    if len(points) < 2 or np.ptp(points[:, 1]) == 0:
+        return float(points[:, 0].mean()) / width
+    slope, intercept = np.polyfit(points[:, 1], points[:, 0], 1)
+    return float(slope * (height - 1) + intercept) / width
+
+
+def frame_contrasts(
+    gray: np.ndarray, lanes: list[LaneInstance], cfg: Settings
+) -> dict[str, float]:
+    """Each line's contrast in one frame, keyed by lane id.
+
+    The outermost line on each side of a frame with two or more lines is an
+    edge line: half its window is verge (grass, soil, kerb, shoulder), which
+    pulls the median off the road surface, up or down. Its background comes
+    from the road-centre side only, the side facing the frame centre. Lines
+    between have road on both sides and keep the full window, where one side
+    alone would be thrown by a vehicle or a shadow (delineation_review §8).
+    """
+    height, width = gray.shape[:2]
+    sides = {lane.id: BOTH for lane in lanes}
+    if len(lanes) >= 2:
+        bottoms = [_bottom_x(lane, height, width) for lane in lanes]
+        for index in {int(np.argmin(bottoms)), int(np.argmax(bottoms))}:
+            sides[lanes[index].id] = RIGHT if bottoms[index] < 0.5 else LEFT
+    out: dict[str, float] = {}
+    for lane in lanes:
+        contrast = lane_contrast(gray, lane, cfg, sides[lane.id])
+        if contrast is not None:
+            out[lane.id] = contrast
+    return out
+
+
+def lane_contrasts(
+    route: AlignedRoute,
+    detections: DetectionSet,
+    cfg: Settings,
+    image_root: Path,
+    frame_ids: set[str],
+) -> dict[str, float]:
+    """The contrast of every accepted line in the given frames, keyed by lane id.
+
+    The same numbers analyse_lane grades with, for the viewer to print beside
+    each line.
+    """
+    paths = {frame.frame_id: frame.path for frame in route.frames}
+    out: dict[str, float] = {}
+    for frame_id in frame_ids:
+        record = detections.lane.get(frame_id)
+        lanes = [
+            i for i in (record.instances if record else [])
+            if isinstance(i, LaneInstance) and i.conf >= cfg.lane.clrernet_conf
+        ]
+        if not lanes or frame_id not in paths:
+            continue
+        image = cv2.imread(str(Path(image_root) / paths[frame_id]), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            continue
+        out.update(frame_contrasts(image, lanes, cfg))
+    return out
+
+
+def _grade(visible_share: float, cfg: Settings) -> Flag:
+    """Adequate when markings are "generally present and visible" (iRAP Coding
+    Manual): at least min_visible_share of the detected lines clear
+    weber_adequate. The worst line alone used to decide, so one worn edge line
+    beside road works condemned a segment whose centre and other edge were
+    clear. Two bands, matching iRAP's Adequate/Poor; no watch band.
+    """
+    return Flag.NORMAL if visible_share >= cfg.lane.min_visible_share else Flag.CRITICAL
 
 
 def irap_delineation_category(flag: Flag) -> int:
@@ -90,7 +199,7 @@ def analyse_lane(
     cfg: Settings,
     image_root: Path,
 ) -> list[ModuleResult]:
-    """One ModuleResult per segment, aggregating by the worst frame."""
+    """One ModuleResult per segment, graded by the share of visible lines."""
     image_root = Path(image_root)
     frames_by_id = {frame.frame_id: frame for frame in route.frames}
 
@@ -110,6 +219,7 @@ def analyse_lane(
         contrasts: list[float] = []
         evidence: list[str] = []
         detected_frames = 0
+        lines_per_frame: list[int] = []
 
         for frame_id in segment.frame_ids:
             record = detections.lane.get(frame_id)
@@ -119,6 +229,7 @@ def analyse_lane(
                 else []
             )
             lanes = [lane for lane in lanes if lane.conf >= cfg.lane.clrernet_conf]
+            lines_per_frame.append(len(lanes))
             if not lanes:
                 # A frame the detector could not resolve is not evidence that the
                 # road is unmarked. Scoring it as zero contrast and aggregating by
@@ -134,22 +245,9 @@ def analyse_lane(
             if image is None:
                 continue
 
-            for lane in lanes:
-                samples = [
-                    value
-                    for value in (
-                        weber_contrast_at(image, x, y, cfg.lane.bg_window)
-                        for x, y in lane.points
-                    )
-                    if value is not None
-                ]
-                if samples:
-                    # A high percentile, not the median: see contrast_percentile
-                    # in the configuration for why a dashed marking demands it.
-                    contrasts.append(
-                        float(np.percentile(samples, cfg.lane.contrast_percentile))
-                    )
-                    evidence.append(lane.id)
+            for lane_id, contrast in frame_contrasts(image, lanes, cfg).items():
+                contrasts.append(contrast)
+                evidence.append(lane_id)
 
         total_frames = len(segment.frame_ids)
         detection_rate = detected_frames / total_frames if total_frames else 0.0
@@ -194,7 +292,15 @@ def analyse_lane(
             continue
 
         worst_contrast = float(min(contrasts))
-        flag = _grade(worst_contrast, cfg)
+        lines_visible = sum(c >= cfg.lane.weber_adequate for c in contrasts)
+        median_lines = float(np.median(lines_per_frame))
+        # Fewer than two lines in a typical frame cannot be centre and edge
+        # markings both present (iRAP), however clear the one line is.
+        flag = (
+            Flag.CRITICAL
+            if median_lines < cfg.lane.min_lines_per_frame
+            else _grade(lines_visible / len(contrasts), cfg)
+        )
         results.append(
             ModuleResult(
                 module=MODULE_NAME,
@@ -202,6 +308,9 @@ def analyse_lane(
                 flag=flag,
                 metrics={
                     "weber_contrast": worst_contrast,
+                    "lines_visible": float(lines_visible),
+                    "lines_total": float(len(contrasts)),
+                    "median_lines_per_frame": median_lines,
                     "detection_rate": detection_rate,
                     "detected_frames": float(detected_frames),
                     "total_frames": float(total_frames),

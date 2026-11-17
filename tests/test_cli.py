@@ -143,7 +143,9 @@ def test_view_scan_serves_each_routes_own_directory(tmp_path: Path, monkeypatch)
     _write_route(parent / "route_b")
     calls = {}
 
-    def fake_serve_routes(directory, route_dirs, port=8000, open_browser=True, upload=None):
+    def fake_serve_routes(
+        directory, route_dirs, port=8000, open_browser=True, upload=None, rebuild=None
+    ):
         calls["directory"] = directory
         calls["route_dirs"] = route_dirs
 
@@ -213,8 +215,8 @@ def _capture_upload(monkeypatch) -> dict:
     seen = {}
     monkeypatch.setattr(
         "irap_screening.view.serve.serve_routes",
-        lambda directory, routes, port=8000, open_browser=True, upload=None: seen.update(
-            upload=upload
+        lambda directory, routes, port=8000, open_browser=True, upload=None, rebuild=None: (
+            seen.update(upload=upload)
         ),
     )
     return seen

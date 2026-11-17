@@ -7,12 +7,12 @@ from irap_screening.config import load_config
 from irap_screening.decision.report import (
     SCHEMA_VERSION,
     build_report,
+    sites,
     to_geojson,
     to_markdown,
     write_report,
 )
 from irap_screening.io.schema import (
-    DoubleLineRecord,
     ExistenceResult,
     Flag,
     ModuleResult,
@@ -55,15 +55,9 @@ def _fixture():
                          evidence=[f"{s.segment_id}#lane#0"])
             for s in segments
         ],
-        "condition": [
-            ModuleResult(module="condition", segment_id=s.segment_id, flag=Flag.NORMAL,
-                         metrics={"pothole_count": 0.0})
-            for s in segments
-        ],
     }
     existence = [
-        ExistenceResult(segment_id=s.segment_id,
-                        double_line=DoubleLineRecord(present=False))
+        ExistenceResult(segment_id=s.segment_id)
         for s in segments
     ]
     recommendations = {
@@ -148,6 +142,21 @@ def test_markdown_lists_the_missing_mitigation():
     assert "chevron" in text
 
 
+def test_markdown_writes_a_curve_series_out_once():
+    """Every segment a series crosses carries its recommendation; the text appears once."""
+    segments, module_results, existence, _ = _fixture()
+    shared = Recommendation(
+        rule="curve_warning_incomplete",
+        trigger={"module": "curvature", "series_id": "S01"},
+        missing=["chevron"], text="Curve series S01 is missing chevrons.",
+    )
+    recommendations = {"R01-0000": [shared], "R01-0001": [shared]}
+    text = to_markdown(build_report("R01", segments, module_results, existence,
+                                    recommendations, cfg=CFG))
+    assert text.count("Curve series S01 is missing chevrons.") == 1
+    assert "S01, see R01-0000" in text
+
+
 def test_write_report_produces_all_three_files(tmp_path: Path):
     write_report(tmp_path, _report())
     assert (tmp_path / "report.json").exists()
@@ -157,27 +166,10 @@ def test_write_report_produces_all_three_files(tmp_path: Path):
     assert loaded["schema_version"] == SCHEMA_VERSION
 
 
-def test_condition_is_carried_even_though_it_is_a_stub():
-    """Road Condition is a declared stub, and the report must still carry it.
+def test_signs_and_frame_reference_are_rendered():
+    """Nothing else in the suite fills these two dashboard fields.
 
-    The stub exists precisely because "condition" is one of the four
-    SCORING_MODULES here. Dropping it would hide an unimplemented attribute
-    instead of surfacing it, which is what not_assessed is for.
-    """
-    report = _report()
-
-    for record in report["segments"]:
-        assert "condition" in record
-        assert "flag" in record["condition"]
-
-    assert "condition" in report["coverage"]
-    assert report["coverage"]["condition"]["total"] == len(report["segments"])
-
-
-def test_signs_double_line_and_frame_reference_are_rendered():
-    """Nothing else in the suite fills these three dashboard fields.
-
-    Without this test, deleting the lines that populate signs, double_line and
+    Without this test, deleting the lines that populate signs and
     representative_frame_id would leave every other test green.
     """
     segments, module_results, existence, recommendations = _fixture()
@@ -185,9 +177,6 @@ def test_signs_double_line_and_frame_reference_are_rendered():
     existence[0] = ExistenceResult(
         segment_id="R01-0000",
         signs=[SignRecord(id="f_000001#sign#0", cls="Bend", conf=0.91, at_m=70.0)],
-        double_line=DoubleLineRecord(
-            present=True, confidence=0.8, evidence=["f_000001#lane#0"]
-        ),
     )
 
     report = build_report(
@@ -197,5 +186,21 @@ def test_signs_double_line_and_frame_reference_are_rendered():
 
     assert first["signs"][0]["cls"] == "Bend"
     assert first["signs"][0]["at_m"] == 70.0
-    assert first["double_line"]["present"] is True
     assert first["representative_frame_id"] == "f_000001"
+
+def test_sites_list_each_series_once_in_route_order():
+    """A series is one site however many segments carry it; a gap without one is its segment's."""
+    segments, module_results, existence, _ = _fixture()
+    curve = Recommendation(
+        rule="curve_warning_incomplete",
+        trigger={
+            "module": "curvature", "series_id": "S01", "curve_start_m": 150.0, "curve_end_m": 180.0
+        },
+        missing=["chevron"],
+    )
+    single = Recommendation(rule="single_segment_rule", trigger={"module": "grade"})
+    recommendations = {"R01-0000": [single], "R01-0001": [curve]}
+    report = build_report("R01", segments, module_results, existence, recommendations, cfg=CFG)
+    listed = sites(report["segments"])
+    assert [(s["id"], s["start_m"]) for s in listed] == [("R01-0000", 0.0), ("S01", 150.0)]
+    assert "| S01 | 150-180 m | curve_warning_incomplete | R01-0001 |" in to_markdown(report)

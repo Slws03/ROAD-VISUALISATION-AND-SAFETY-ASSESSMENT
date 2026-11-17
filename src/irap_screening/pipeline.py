@@ -1,17 +1,13 @@
 """Orchestration of the CPU fusion layer.
 
 Kept separate from cli.py so the whole flow can be tested without invoking a
-command-line runner. Grade runs before Road Condition because the latter reuses
-the former's pitch estimate for ground-plane projection, which removes the need
-for a separate camera calibration step.
+command-line runner.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 from irap_screening.config import Settings
 from irap_screening.decision.curve_quality import code_quality_of_curve
@@ -21,9 +17,12 @@ from irap_screening.io.align import align_route
 from irap_screening.io.detections import load_detection_set
 from irap_screening.io.schema import ModuleResult
 from irap_screening.io.sources.fixture import FixtureSource
-from irap_screening.modules.condition import analyse_condition
-from irap_screening.modules.curvature import analyse_curvature
-from irap_screening.modules.grade import analyse_grade, pitch_series
+from irap_screening.modules.curvature import (
+    analyse_curvature,
+    estimate_gyro_bias,
+    find_curves,
+)
+from irap_screening.modules.grade import analyse_grade
 from irap_screening.modules.lane import analyse_lane
 from irap_screening.modules.marking import analyse_marking
 from irap_screening.segment import build_segments
@@ -52,27 +51,17 @@ def run_pipeline(route_dir: Path, cfg: Settings, route_id: str = "R01") -> dict[
     segments = build_segments(route, cfg, route_id=route_id)
     detections = load_detection_set(route_dir / "detections")
 
-    pitch = pitch_series(route, cfg)
-    mean_pitch = float(np.mean(pitch)) if pitch.size else 0.0
-
     module_results = {
         "curvature": analyse_curvature(route, segments, cfg),
         "grade": analyse_grade(route, segments, cfg),
         "delineation": analyse_lane(route, segments, detections, cfg, image_root=route_dir),
-        "condition": analyse_condition(
-            route, segments, detections, cfg, pitch_rad=mean_pitch
-        ),
     }
     _require_all_modules(module_results)
-    existence = analyse_marking(
-        route,
-        segments,
-        detections,
-        cfg,
-        image_root=route_dir,
-        grade_results=module_results["grade"],
+    existence = analyse_marking(route, segments, detections, cfg)
+    curves = find_curves(route, cfg, estimate_gyro_bias(route, cfg))
+    recommendations = run_gapcheck(
+        segments, module_results, existence, cfg, curves, route.frame_dist_m
     )
-    recommendations = run_gapcheck(segments, module_results, existence, cfg)
     quality = code_quality_of_curve(segments, module_results, existence, cfg)
 
     return build_report(

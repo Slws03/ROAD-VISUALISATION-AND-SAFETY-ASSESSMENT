@@ -11,12 +11,21 @@ from irap_screening.config import load_config
 from irap_screening.io.align import align_route
 from irap_screening.io.detections import DetectionSet
 from irap_screening.io.schema import DetectionRecord, Flag, LaneInstance, Transform
-from irap_screening.modules.lane import analyse_lane, irap_delineation_category, weber_contrast_at
+from irap_screening.modules.lane import (
+    analyse_lane,
+    frame_contrasts,
+    irap_delineation_category,
+    lane_contrasts,
+    weber_contrast_at,
+)
 from irap_screening.segment import build_segments
 from tests.factories import straight_route
 
 BG_LEVEL = 100
 LINE_X = 320
+# These fixtures draw one line per frame to test contrast grading; the
+# two-line minimum is switched off here and tested on its own below.
+ONE_LINE = ["lane.min_lines_per_frame=0"]
 
 
 def _write_frame(path: Path, line_level: int | None) -> None:
@@ -51,7 +60,7 @@ def _build(tmp_path: Path, line_level: int | None, line_present: bool = True):
     for frame in frames:
         _write_frame(tmp_path / frame.path, line_level)
     route = align_route(frames, gps, imu)
-    cfg = load_config()
+    cfg = load_config(overrides=ONE_LINE)
     segments = build_segments(route, cfg)
     detections = DetectionSet(
         lane={f.frame_id: _lane_record(f.frame_id, line_present) for f in frames}
@@ -74,6 +83,24 @@ def test_weber_contrast_is_near_zero_for_a_faded_line():
     assert contrast == pytest.approx(0.05, abs=0.03)
 
 
+def test_a_marking_a_few_pixels_off_the_lane_point_is_still_found_on_a_large_frame():
+    """CLRerNet's points can sit 8 px off the paint on a 1920-wide frame."""
+    gray = np.full((1080, 1920), BG_LEVEL, dtype=np.uint8)
+    gray[:, 1008:1015] = 200  # stripe centred 11 px right of the point at 1000
+    assert weber_contrast_at(gray, 1000.0, 500.0, 81) == pytest.approx(0.0, abs=0.01)
+    assert weber_contrast_at(gray, 1000.0, 500.0, 81, peak_frac=0.005) == pytest.approx(
+        1.0, rel=0.05
+    )
+
+
+def test_the_peak_window_never_shrinks_below_4_px_on_a_small_frame():
+    gray = np.full((480, 640), BG_LEVEL, dtype=np.uint8)
+    gray[:, LINE_X + 4] = 200  # 0.005 * 640 rounds to 3 px; the 4 px floor still reaches it
+    assert weber_contrast_at(gray, float(LINE_X), 300.0, 81, peak_frac=0.005) == pytest.approx(
+        1.0, rel=0.05
+    )
+
+
 def test_bright_marking_is_normal(tmp_path: Path):
     results = analyse_lane(*_build(tmp_path, line_level=200), image_root=tmp_path)
     assert results[0].flag is Flag.NORMAL
@@ -85,7 +112,7 @@ def test_mid_contrast_marking_is_critical(tmp_path: Path):
     ground, and this project no longer keeps its own -- a marking faded past
     "clearly visible" grades critical/poor rather than a separate watch band.
     """
-    results = analyse_lane(*_build(tmp_path, line_level=128), image_root=tmp_path)
+    results = analyse_lane(*_build(tmp_path, line_level=120), image_root=tmp_path)
     assert results[0].flag is Flag.CRITICAL
 
 
@@ -142,19 +169,83 @@ def test_evidence_lists_contributing_instance_ids(tmp_path: Path):
     assert all("#lane#" in instance_id for instance_id in results[0].evidence)
 
 
-def test_aggregation_takes_the_worst_frame(tmp_path: Path):
-    """max_risk: one faded frame among bright ones codes the whole segment."""
+def _mixed(tmp_path: Path, faded) -> list:
     frames, gps, imu = straight_route(length_m=200.0)
     for index, frame in enumerate(frames):
-        _write_frame(tmp_path / frame.path, 110 if index == 0 else 200)
+        _write_frame(tmp_path / frame.path, 110 if faded(index) else 200)
     route = align_route(frames, gps, imu)
-    cfg = load_config()
+    cfg = load_config(overrides=ONE_LINE)
     segments = build_segments(route, cfg)
     detections = DetectionSet(
         lane={f.frame_id: _lane_record(f.frame_id, True) for f in frames}
     )
-    results = analyse_lane(route, segments, detections, cfg, image_root=tmp_path)
+    return analyse_lane(route, segments, detections, cfg, image_root=tmp_path)
+
+
+def test_one_faded_line_does_not_condemn_a_generally_visible_segment(tmp_path: Path):
+    """iRAP Adequate asks for markings "generally present and visible", not every line."""
+    results = _mixed(tmp_path, lambda index: index == 0)
+    assert results[0].flag is Flag.NORMAL
+    assert results[0].metrics["lines_visible"] == results[0].metrics["lines_total"] - 1
+    assert results[0].metrics["weber_contrast"] < 0.35
+
+
+def test_mostly_faded_lines_are_critical(tmp_path: Path):
+    results = _mixed(tmp_path, lambda index: index != 0)
     assert results[0].flag is Flag.CRITICAL
+
+
+def test_the_viewer_contrasts_are_the_ones_graded(tmp_path: Path):
+    """The labels on the frames must be the numbers the flag came from."""
+    route, segments, detections, cfg = _build(tmp_path, line_level=200)
+    frame_ids = set(segments[0].frame_ids)
+
+    contrasts = lane_contrasts(route, detections, cfg, tmp_path, frame_ids)
+    result = analyse_lane(route, segments, detections, cfg, image_root=tmp_path)[0]
+
+    assert set(contrasts) == set(result.evidence)
+    assert min(contrasts.values()) == pytest.approx(result.metrics["weber_contrast"])
+
+
+def _verge_frame() -> np.ndarray:
+    """Asphalt (100) with dark verge (40) left of x=162; paint (200) at 162-164,
+    320-322 and 478-480. A lane point at x=160 sits on the verge, 2 px off the
+    paint, so most of its full background window is verge."""
+    gray = np.full((480, 640), 100, dtype=np.uint8)
+    gray[:, :162] = 40
+    for x in (162, 320, 478):
+        gray[:, x : x + 3] = 200
+    return gray
+
+
+def _vertical(lane_id: str, x: float) -> LaneInstance:
+    return LaneInstance(id=lane_id, points=[(x, y) for y in (300.0, 350.0, 400.0)], conf=0.9)
+
+
+def test_an_edge_line_takes_its_background_from_the_road_side():
+    """Verge in the window pulled the median down and the contrast up (delineation_review §8)."""
+    cfg = load_config()
+    edge, other = _vertical("edge", 160.0), _vertical("other", 479.0)
+
+    paired = frame_contrasts(_verge_frame(), [edge, other], cfg)
+    alone = frame_contrasts(_verge_frame(), [edge], cfg)
+
+    assert paired["edge"] == pytest.approx(1.0)  # (200 - 100) / 100: road side only
+    assert alone["edge"] == pytest.approx(4.0)  # (200 - 40) / 40: one line, full window
+
+
+def test_a_line_between_two_others_keeps_the_full_window():
+    """Road on both sides; one side alone would be thrown by a vehicle or shadow."""
+    cfg = load_config()
+    gray = _verge_frame()
+    gray[:, 280:320] = 40  # a shadow on the middle line's left only
+    lanes = [_vertical("left", 160.0), _vertical("middle", 321.0), _vertical("right", 479.0)]
+
+    contrasts = frame_contrasts(gray, lanes, cfg)
+
+    assert contrasts["middle"] == pytest.approx(
+        weber_contrast_at(gray, 321.0, 350.0, cfg.lane.bg_window, cfg.lane.peak_window_frac)
+    )
 
 
 def test_segment_without_frames_is_not_assessed(tmp_path: Path):
@@ -209,7 +300,7 @@ def _build_dashed(tmp_path: Path, paint_level: int):
     for frame in frames:
         _dashed_frame(tmp_path / frame.path, paint_level)
     route = align_route(frames, gps, imu)
-    cfg = load_config()
+    cfg = load_config(overrides=ONE_LINE)
     return (
         route,
         build_segments(route, cfg),
@@ -271,7 +362,7 @@ def _build_partial(tmp_path: Path, keep):
     for frame in frames:
         _write_frame(tmp_path / frame.path, line_level=240)
     route = align_route(frames, gps, imu)
-    cfg = load_config()
+    cfg = load_config(overrides=ONE_LINE)
     return (
         route,
         build_segments(route, cfg),
@@ -312,8 +403,41 @@ def test_sparse_detection_is_not_assessed_rather_than_scored(tmp_path: Path):
 
 def test_the_detection_floor_is_configurable(tmp_path: Path):
     route, segments, detections, _ = _build_partial(tmp_path, keep=lambda i: i % 5 == 0)
-    cfg = load_config(overrides=["lane.min_detection_rate=0.1"])
+    cfg = load_config(overrides=["lane.min_detection_rate=0.1", *ONE_LINE])
 
     results = analyse_lane(route, segments, detections, cfg, image_root=tmp_path)
 
     assert results[0].flag is Flag.NORMAL
+
+def test_one_clear_line_alone_is_poor(tmp_path: Path):
+    """iRAP asks for centre and edge markings; a lone line, however bright, is not both."""
+    route, segments, detections, _ = _build(tmp_path, line_level=240)
+    cfg = load_config()
+
+    results = analyse_lane(route, segments, detections, cfg, image_root=tmp_path)
+
+    assert results[0].flag is Flag.CRITICAL
+    assert results[0].metrics["median_lines_per_frame"] == 1.0
+    assert results[0].metrics["lines_visible"] == results[0].metrics["lines_total"]
+
+
+def test_two_clear_lines_per_frame_pass_the_line_count(tmp_path: Path):
+    frames, gps, imu = straight_route(length_m=200.0)
+    for frame in frames:
+        image = np.full((480, 640, 3), BG_LEVEL, dtype=np.uint8)
+        image[:, 197:204] = 240
+        image[:, 437:444] = 240
+        (tmp_path / frame.path).parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(tmp_path / frame.path), image)
+    route = align_route(frames, gps, imu)
+    cfg = load_config()
+    detections = DetectionSet(lane={
+        f.frame_id: _lane_record(f.frame_id, True).model_copy(update={"instances": [
+            _vertical(f"{f.frame_id}#lane#0", 200.0), _vertical(f"{f.frame_id}#lane#1", 440.0)]})
+        for f in frames
+    })
+
+    results = analyse_lane(route, build_segments(route, cfg), detections, cfg, image_root=tmp_path)
+
+    assert results[0].flag is Flag.NORMAL
+    assert results[0].metrics["median_lines_per_frame"] == 2.0

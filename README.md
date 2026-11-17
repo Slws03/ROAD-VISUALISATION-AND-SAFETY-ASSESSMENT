@@ -137,25 +137,16 @@ Output defaults beside the data it describes -- `DIR/out` for the report,
 | Lane marking | Delineation | Weber contrast at CLRerNet lane points |
 | Curvature | Curvature | kappa = omega / v, gyro bias corrected, low-speed gated |
 | Grade | Grade | Complementary-filter pitch from accelerometer |
-| Road condition | Road Condition | Declared stub: reports not_assessed pending camera intrinsics and mounting height |
 | Sign and marking | (supporting) | Existence facts for gap-check only; produces no flag |
 
 ## Known limitations
 
 - Curvature (400 m) and grade (7.5 percent) thresholds are provisional, pending
   sensitivity analysis.
-- Pothole concavity depth cannot be measured from a single camera, so iRAP's
-  "one defect deeper than 5 cm is Poor" rule is not implemented.
-- Road Condition is a declared stub in this build. It reports `not_assessed` for
-  every segment so the gap stays visible in the coverage statistics rather than
-  passing unnoticed; defect sizing needs camera intrinsics and mounting height.
-- Rutting is out of scope; it needs continuous deformation measurement along the
-  wheel path.
-- Advance warning signs are checked at a point 230 m upstream of the hazard, so a
-  hazard within the first 230 m of a recorded route has no observable upstream
-  window and its advance sign is always reported missing. This is conservative
-  rather than wrong, but it means route-start segments carry a known false
-  positive for `advance_bend_sign`.
+- Advance warning signs are checked at a point 230 m before the first curve of a
+  series, so a series within the first 230 m of a recorded route has no photos
+  of its sign's position. Its advance sign is reported `unchecked`, not missing,
+  and the recommendation says it could not be checked.
 - The committed fixture contains no `sign.jsonl`, and its `lane.jsonl` is
   synthesised rather than produced by CLRerNet. The fixture exercises the
   decision layer; it is not evidence about detector accuracy.

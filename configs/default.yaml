@@ -3,38 +3,41 @@
 
 segment:
   length_m: 100                  # iRAP coding unit (Star Rating manual)
-  # Aggregation is per-module, never global.
-  # Road Condition counts defects across the whole segment before classifying;
-  # implementing it as max-over-frames makes count always 1 and silently
-  # prevents the iRAP 5-vs-1-4 boundary from ever firing.
-  aggregation:
-    lane: max_risk
-    curvature: max_risk
-    grade: max_risk
-    condition: count_then_classify
-
-sampling:
-  target_spacing_m: 20           # PLACEHOLDER: derive from per-frame detectable
-                                 # ground footprint (FOV, mount height, range)
-                                 # once camera parameters are known
 
 curvature:
-  threshold_m: 400               # iRAP Curvature Risk Factor boundary (provisional)
+  threshold_m: 400               # iRAP category 2/3 boundary: sharp and very sharp
+                                 # are critical. JKR 2A/85 2.3.1 signs a curve only
+                                 # when its recommended speed is at or below the
+                                 # limit; iRAP's moderate (400-800 m) is driven at
+                                 # 70-100 km/h, above these rural roads' limits.
+                                 # 800 suits roads limited near 100 km/h
+                                 # (D:/FYP/curvature_review/threshold_bands.md).
   v_min_mps: 5.0                 # below this, curvature is not_assessed
   stationary_speed_mps: 0.5      # vehicle stopped; distinct from v_min_mps, which
                                  # is the floor for curvature being assessable at all
   stationary_accel_var: 0.05     # variance ceiling that counts as stationary
+  window_m: 50                   # TRIAL. Curvature is the heading change over this
+                                 # much road, not v/|yaw| per gyro sample: iRAP codes
+                                 # road geometry, and per-sample noise read straight
+                                 # phone-surveyed road as 100 m curves. 50 m agreed
+                                 # best with GPS and OSM curvature on the Samarahan
+                                 # routes (D:/FYP/curvature_review); longer windows
+                                 # start missing short curves.
 
 grade:
   threshold_pct: 7.5             # iRAP Grade Risk Factor boundary (provisional)
-  comp_filter_alpha: 0.98        # complementary filter: gyro weight.
-                                 # PROVISIONAL and measurably poor: against
-                                 # KITTI 0042's INS pitch, 0.98 gives 1.05 deg
-                                 # RMSE where 0.5-0.8 give 0.30-0.32. This
-                                 # module's gyro branch has no bias correction
-                                 # (curvature's does), so a heavy gyro weight
-                                 # lets drift accumulate. Left unchanged: one
-                                 # drive is no basis for retuning a default.
+  window_m: 30                   # TRIAL. Accelerometer pitch is averaged over this
+                                 # much road (after the vehicle's own acceleration
+                                 # is removed); the gyro is no longer used. KITTI:
+                                 # 0.26 deg RMSE vs INS at 30 m, 0.28 at 50 m;
+                                 # Samarahan: 55 vs 41 critical. Shorter keeps short
+                                 # steep pitches (a 10% one needs ~23 m at 30 m,
+                                 # ~38 m at 50 m) but lets more phone noise through
+                                 # (D:/FYP/grade_review).
+  gps_max_step_pct: 20           # GPS-altitude cross-check only: a climb between
+                                 # consecutive fixes steeper than this is a receiver
+                                 # jump, not road, and is dropped. Samarahan: caps
+                                 # the cross-check's worst segment at 15% (was 43.5%).
 
 lane:
   clrernet_conf: 0.41            # CLRerNet official default
@@ -51,25 +54,43 @@ lane:
                                  # not_assessed: too little evidence to grade the
                                  # road, and a detector limitation must not be
                                  # reported as a road defect.
-  weber_adequate: 0.35           # PROVISIONAL. Two bands, not three: iRAP's
+  weber_adequate: 0.25           # Fitted 2026-11-16 to the author's labels on 139
+                                 # segments (iRAP Coding Manual wording; LOO picks
+                                 # 0.22, accuracy flat 0.20-0.25, 0.25 keeps more
+                                 # Poor). 8-bit phone JPEG caps Weber on pale road
+                                 # (bg 200 -> max 0.28), so literature values on
+                                 # linear luminance do not carry over.
+                                 # D:/FYP/delin_audit/irap_relabel. Two bands, not three: iRAP's
                                  # Delineation is Adequate/Poor, and this
                                  # project keeps only its own equivalent
                                  # (lane marking visibility, not the full
                                  # attribute -- it does not cover hazard
                                  # warning signs, a known gap). contrast >=
                                  # this reads adequate; below it, poor.
+  min_visible_share: 0.5         # TRIAL. Share of a segment's detected lines
+                                 # (every line in every frame) that must clear
+                                 # weber_adequate for Adequate: iRAP asks that
+                                 # markings be "generally present and visible",
+                                 # not every line. Delineation follows AiRAP,
+                                 # determined from road lines/markings/lanes
+                                 # only; hazard warning signs are not assessed.
+  min_lines_per_frame: 2         # Median detected lines per frame (frames with
+                                 # none count as 0) below this -> Poor. A lone
+                                 # clear line, or a kerb found on an unmarked
+                                 # road, would otherwise pass the share test.
+                                 # Accuracy 0.806 -> 0.848 on the author's labels;
+                                 # no 3-line segment had a median under 2.
   bg_window: 81                  # background window for contrast sampling
-
-doubleline:                      # from the doubleline_coord_scan experiment
-  window_steps: [50, 90, 130, 180, 240]
-  bg_window: 81
-  contrast_thresh: 0.4
-  min_width: 3
-  min_gap_merge: 2
-  min_gap_px: 3
-  max_gap_fraction: 0.9
-  max_gap_cap_px: 150
-  anchor_tol_px: 20
+  peak_window_frac: 0.005        # PROVISIONAL. The marking's peak is sought
+                                 # this share of the image width either side
+                                 # of each lane point (never under 4 px).
+                                 # Tolerates CLRerNet points that sit off the
+                                 # paint. On the Samarahan routes that is rare
+                                 # (over 4 px for 0.3% of lines at 1280 wide, 1.4%
+                                 # at 1920); the window mainly lifts contrast by
+                                 # 0.01-0.03 over +-4 px, enough to move 12 of
+                                 # 266 segments to adequate. 0.005 is +-6 px at
+                                 # 1280, +-10 at 1920. D:/FYP/delineation_review.
 
 sign:
   runner_conf: 0.10              # GPU-side floor, written into the cached artifact.
@@ -84,19 +105,11 @@ sign:
                                  # under-reporting them.
   imgsz: 1280                    # matches the training run (args.yaml imgsz: 1280)
 
-condition:
-  yolo_conf: 0.35
-  width_threshold_cm: 20         # iRAP size boundary
-  count_poor: 5                  # >= this many qualifying defects -> critical
-  count_medium: 1                # 1..4 qualifying defects -> watch
-  ipm:
-    camera_height_m: null        # REQUIRED from data provider; null disables width
-    fx: null
-    fy: null
-    cx: null
-    cy: null
-    max_range_m: 15.0            # width estimated only within this near-field band
-
 gapcheck:
-  curve_sign_distance_m: 230     # JKR: bend sign placed 230 m before curve entry
+  curve_sign_distance_m: 230     # JKR ATJ 2B/85 cl. 2.3: warning sign 230 m before
+                                 # the first curve's tangent point
   curve_sign_tolerance_m: 50     # tolerance around that point
+  curve_sign_lookahead_m: 50     # a sign is photographed before the camera reaches
+                                 # it: photos up to this far before the window count
+  curve_series_gap_m: 180        # JKR ATJ 2B/85 cl. 2.3: curves closer than this are
+                                 # one series (Reverse Curve or Winding Road sign)

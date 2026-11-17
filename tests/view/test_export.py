@@ -10,14 +10,18 @@ import json
 from pathlib import Path
 
 from irap_screening.config import load_config
+from irap_screening.io.align import align_route
+from irap_screening.segment import build_segments
 from irap_screening.view.export import (
     TEMPLATE,
     add_route,
     discover_routes,
     export_routes,
     export_view,
+    segment_path,
 )
 from irap_screening.view.review import save_review_entry
+from tests.factories import curved_route
 from tests.test_pipeline import _write_route
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "route_demo"
@@ -34,6 +38,38 @@ def test_writes_the_two_pieces_the_page_needs(tmp_path):
 
     assert (out / "index.html").exists()
     assert (out / "data.json").exists()
+
+
+def test_every_drawn_lane_carries_its_contrast(tmp_path):
+    """The frame labels read the contrast per lane id, for accepted lanes only."""
+    out = _export(tmp_path)
+    data = json.loads((out / "data.json").read_text(encoding="utf-8"))
+    conf = data["config"]["lane"]["clrernet_conf"]
+    referenced = {fid for segment in data["segments"] for fid in segment["frame_ids"]}
+
+    accepted = set()
+    for line in (FIXTURE / "detections" / "lane.jsonl").read_text(encoding="utf-8").splitlines():
+        record = json.loads(line)
+        if record["frame_id"] in referenced:
+            accepted |= {i["id"] for i in record["instances"] if i["conf"] >= conf}
+
+    assert accepted
+    assert set(data["lane_contrast"]) == accepted
+    assert all(isinstance(value, float) for value in data["lane_contrast"].values())
+
+
+def test_each_frame_has_a_map_position_on_its_segment(tmp_path):
+    """One position per frame, in frame order, lying within the route's GPS extent."""
+    out = _export(tmp_path)
+    data = json.loads((out / "data.json").read_text(encoding="utf-8"))
+    track = [point for segment in data["segments"] for point in segment["path_latlon"]]
+    lats, lons = [p[0] for p in track], [p[1] for p in track]
+
+    for segment in data["segments"]:
+        assert len(segment["frame_latlon"]) == len(segment["frame_ids"])
+        for lat, lon in segment["frame_latlon"]:
+            assert min(lats) <= lat <= max(lats)
+            assert min(lons) <= lon <= max(lons)
 
 
 def test_no_evidence_directory_is_written(tmp_path):
@@ -67,16 +103,27 @@ def test_segments_carry_the_frame_ids_the_report_omits(tmp_path):
     assert first["representative_frame_id"] == first["frame_ids"][0]
 
 
+def test_each_frame_carries_where_along_the_segment_it_was_taken(tmp_path):
+    out = _export(tmp_path)
+    data = json.loads((out / "data.json").read_text(encoding="utf-8"))
+
+    for segment in data["segments"]:
+        assert len(segment["frame_m"]) == len(segment["frame_ids"])
+        assert all(segment["start_m"] <= m <= segment["end_m"] for m in segment["frame_m"])
+        assert segment["frame_m"] == sorted(segment["frame_m"])
+
+
 def test_the_report_travels_intact(tmp_path):
     """The viewer must not become a second, divergent summary of the run."""
     out = _export(tmp_path)
     data = json.loads((out / "data.json").read_text(encoding="utf-8"))
 
     assert data["route_id"] == "R01"
+    assert data["route_name"] == "route_demo"
     assert "coverage" in data
     assert "config" in data
     for segment in data["segments"]:
-        for module in ("curvature", "grade", "delineation", "condition"):
+        for module in ("curvature", "grade", "delineation"):
             assert "flag" in segment[module]
 
 
@@ -107,10 +154,9 @@ def test_coverage_uses_total_and_not_assessed(tmp_path):
     out = _export(tmp_path)
     data = json.loads((out / "data.json").read_text(encoding="utf-8"))
 
-    for module in ("curvature", "grade", "delineation", "condition"):
+    for module in ("curvature", "grade", "delineation"):
         entry = data["coverage"][module]
         assert set(entry) == {"total", "not_assessed"}
-    assert data["coverage"]["condition"]["not_assessed"] == data["coverage"]["condition"]["total"]
 
 
 def test_segments_carry_an_empty_review_when_none_was_ever_saved(tmp_path):
@@ -126,14 +172,14 @@ def test_a_saved_review_merges_into_the_matching_segment(tmp_path):
     still show up in data.json, or the viewer would have no way to display it."""
     route = tmp_path / "route"
     _write_route(route)
-    save_review_entry(route, "R01-0000", "delineation", "ok", "checked against the frame")
+    save_review_entry(route, "R01-0000", "delineation", 1, "checked against the frame")
 
     out = tmp_path / "view"
     export_view(route, load_config(), out)
     data = json.loads((out / "data.json").read_text(encoding="utf-8"))
 
     segment = next(s for s in data["segments"] if s["segment_id"] == "R01-0000")
-    assert segment["review"]["delineation"]["verdict"] == "ok"
+    assert segment["review"]["delineation"]["category"] == 1
     other = next(s for s in data["segments"] if s["segment_id"] != "R01-0000")
     assert other["review"] == {}
 
@@ -166,7 +212,10 @@ def test_export_routes_writes_one_shared_page_and_per_route_data(tmp_path):
 
     assert (out_dir / "index.html").exists()
     routes = json.loads((out_dir / "routes.json").read_text(encoding="utf-8"))
-    assert {r["id"] for r in routes} == {"route_a", "route_b"}
+    assert routes == [
+        {"id": "route_a", "label": "R01-route_a"},
+        {"id": "route_b", "label": "R02-route_b"},
+    ]
     for route_id in ("route_a", "route_b"):
         assert (out_dir / route_id / "data.json").exists()
         # Only the shared page at out_dir is served; a nested one would be dead weight.
@@ -195,3 +244,59 @@ def test_the_page_carries_the_upload_control_hidden_by_default():
     assert 'id="upload" hidden' in page
     assert 'fetch("job")' in page
     assert "upload?name=" in page
+
+
+def test_profile_holds_the_samples_the_flags_were_decided_on(tmp_path):
+    """The evidence chart must plot the flag's own numbers, not a re-derivation."""
+    out = _export(tmp_path)
+    text = (out / "data.json").read_text(encoding="utf-8")
+    assert "NaN" not in text  # JSON.parse rejects it; gated samples must be null
+    profile = json.loads(text)["profile"]
+
+    lengths = {len(series) for series in profile.values()}
+    assert len(lengths) == 1 and lengths.pop() > 0
+    radii = set(profile["radius_m"])
+    grades = set(profile["grade_pct"])
+    for segment in json.loads(text)["segments"]:
+        curvature, grade = segment["curvature"], segment["grade"]
+        if "radius_m" in curvature:
+            assert round(curvature["radius_m"], 1) in radii
+        if "grade_pct" in grade:
+            assert round(grade["grade_pct"], 2) in grades
+
+
+def test_grade_window_points_at_the_sample_the_grade_flag_used(tmp_path):
+    """The viewer shades this window and marks this sample, so it must be the flag's own."""
+    data = json.loads((_export(tmp_path) / "data.json").read_text(encoding="utf-8"))
+    profile = data["profile"]
+    for segment in data["segments"]:
+        grade, window = segment["grade"], segment["grade_window"]
+        if "grade_pct" not in grade:
+            continue
+        assert profile["grade_pct"][window["index"]] == round(grade["grade_pct"], 2)
+        assert window["start_m"] <= profile["dist_m"][window["index"]] <= window["end_m"]
+        if not window["fallback"]:
+            assert window["end_m"] - window["start_m"] >= 10.0 - 0.1  # 0.1: rounding
+
+
+def test_the_profile_carries_the_gps_cross_check_series(tmp_path):
+    """One value per sample beside the series they check; null where GPS has none."""
+    out = _export(tmp_path)
+    profile = json.loads((out / "data.json").read_text(encoding="utf-8"))["profile"]
+    for key in ("gps_radius_m", "gps_grade_pct"):
+        assert len(profile[key]) == len(profile["dist_m"])
+
+
+def test_a_segment_path_follows_the_gps_track_between_its_ends():
+    """A curve drawn from its ends alone cuts the corner on the map."""
+    cfg = load_config()
+    route = align_route(*curved_route(radius_m=312.5, arc_length_m=300.0))
+    segment = build_segments(route, cfg)[0]
+    path = segment_path(route, segment)
+    assert path[0] == list(segment.start_latlon)
+    assert path[-1] == list(segment.end_latlon)
+    assert len(path) > 2
+    # The middle fix lies off the straight line between the ends.
+    (lat0, lon0), (lat1, lon1) = path[0], path[-1]
+    lat, lon = path[len(path) // 2]
+    assert abs((lat1 - lat0) * (lon - lon0) - (lon1 - lon0) * (lat - lat0)) > 1e-10

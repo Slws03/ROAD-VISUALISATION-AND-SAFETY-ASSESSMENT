@@ -12,8 +12,7 @@ on its own time axis, and thinning it would only coarsen the curvature and grade
 windows for no benefit.
 
 KITTI is continuous 10 Hz video. The default keeps every tenth frame, giving
-roughly 1 Hz -- about 20 m of ground between frames at highway speed, which is
-what sampling.target_spacing_m assumes. Frames are renumbered sequentially from
+roughly 1 Hz -- about 20 m of ground between frames at highway speed. Frames are renumbered sequentially from
 zero; the original KITTI index is kept in a source_frame column so a frame can
 still be found in the drive it came from.
 

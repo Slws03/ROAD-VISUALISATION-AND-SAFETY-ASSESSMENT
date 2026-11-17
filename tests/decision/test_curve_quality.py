@@ -80,6 +80,25 @@ def test_unsigned_curve_is_poor():
     assert codes["R01-0004"] == 2
 
 
+def test_only_a_poor_curve_is_flagged_critical():
+    segments = _segments()
+    results = _results(segments, category={"R01-0004": 3}, unassessed={"R01-0007"})
+    coded = code_quality_of_curve(segments, results, _existence(segments, ()), CFG)
+    assert coded["R01-0004"]["flag"] == "critical"
+    assert coded["R01-0000"]["flag"] == "normal"  # straight: not applicable
+    assert coded["R01-0007"]["flag"] == "not_assessed"
+
+
+def test_poor_moderate_curve_keeps_its_code_but_is_not_critical():
+    """Manual p.115 wants the code on a moderate curve; curvature.threshold_m = 400 sets the flag."""
+    segments = _segments()
+    coded = code_quality_of_curve(
+        segments, _results(segments, category={"R01-0004": 2}), _existence(segments), CFG
+    )
+    assert coded["R01-0004"]["code"] == 2
+    assert coded["R01-0004"]["flag"] == "normal"
+
+
 def test_advance_sign_alone_is_adequate():
     """Manual condition b: a warning sign is enough; chevrons are not also required."""
     segments = _segments()
@@ -95,6 +114,16 @@ def test_chevron_alone_is_adequate():
         segments, _results(segments, category={"R01-0004": 4}), [_sign("Chevron", 450.0)]
     )
     assert codes["R01-0004"] == 1
+
+
+def test_signs_photographed_before_their_place_still_count():
+    """The camera sees a sign ahead: the advance sign belongs at 170 m and the
+    chevron on the curve from 400 m, but their photos are taken earlier."""
+    segments = _segments()
+    results = _results(segments, category={"R01-0004": 3})
+    assert _codes(segments, results, [_sign("Bend", 100.0)])["R01-0004"] == 1
+    assert _codes(segments, results, [_sign("Chevron", 360.0)])["R01-0004"] == 1
+    assert _codes(segments, results, [_sign("Chevron", 340.0)])["R01-0004"] == 2
 
 
 def test_poor_delineation_forces_poor_even_when_signed():

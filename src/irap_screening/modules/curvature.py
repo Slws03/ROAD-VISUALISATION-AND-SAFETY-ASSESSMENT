@@ -4,16 +4,41 @@ Curvature is kappa = omega / v. Integrating the gyro z axis alone yields heading
 change, not curvature: the same yaw rate at 30 km/h and at 80 km/h corresponds to
 radii that differ by nearly a factor of three.
 
-Two guards are mandatory rather than optional:
+Three guards are mandatory rather than optional:
 
 - Low-speed gating. As v approaches zero, kappa diverges. Traffic lights and
   junction stops would otherwise manufacture extreme curvature.
 - Bias correction. A 400 m radius at 60 km/h is omega = 0.042 rad/s, about
   2.4 deg/s, the same order as consumer phone gyro bias drift. Without removing
   the bias the threshold decision is dominated by drift.
+- A distance window. iRAP codes the road's geometry (curve radius), not the
+  vehicle's instantaneous path (Tsai et al. 2021, GDOT 19-17, keep the two
+  apart). v / |omega| per sample is the latter: on a phone gyro its noise
+  alone reads straight road as a 100 m curve, and on any gyro a steering
+  correction reads as a bend. Curvature is therefore the heading change over
+  window_m of road divided by window_m (deflection angle over arc length),
+  with heading integrated from the bias-corrected gyro.
+
+A segment is coded by the sharpest window lying wholly inside it: the
+sharpest window_m of road within the 100 m, as iRAP codes the most severe
+curve in a segment and as its grade rule takes the steepest gradient held
+over >= 10 m. A window centred near a segment's end would otherwise reach
+into the next segment and code this one with its neighbour's curve, which
+on the Samarahan routes did so to about 12% of segments, equally with gyro,
+GPS and OSM curvature (D:/FYP/curvature_review/window_spill.md). Against
+OSM centreline curvature under the same rule, 83% of segment flags agree.
+
+Where the route carries a GPS bearing, the same window and rule are applied
+to it as an independent cross-check. The gyro still decides the flag; a
+segment where the two disagree on it is marked needs_review, for a person to
+look at. The two agreed with each other far more often than either with OSM,
+and where they disagreed neither was reliably right
+(D:/FYP/curvature_review/osm_three_way.md).
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -70,21 +95,170 @@ def irap_curvature_category(radius_m: float) -> int:
     return 4
 
 
+def radius_series(route: AlignedRoute, cfg: Settings, bias: float) -> np.ndarray:
+    """Turn radius in metres, one value per IMU sample.
+
+    The radius at a sample is window_m divided by the heading change over the
+    window_m of road centred on it. NaN where speed is below v_min_mps
+    (curvature is undefined there, not large) and within window_m / 2 of either
+    end of the route, where the window runs off the data. Shared by the segment
+    flag and the viewer's evidence chart, so the chart plots exactly the values
+    the flag was decided on.
+    """
+    if len(route.imu) < 2:
+        return np.full(len(route.imu), np.nan)
+    along, heading = _gyro_heading(route, cfg, bias)
+    return _window_radius(route, along, heading, cfg)
+
+
+def _gyro_heading(
+    route: AlignedRoute, cfg: Settings, bias: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bias-corrected gyro heading (radians, counter-clockwise positive) against
+    distance, one point per moving IMU sample."""
+    times = np.array([sample.timestamp_utc.timestamp() for sample in route.imu])
+    gz = np.array([sample.gz for sample in route.imu], dtype=float) - bias
+    # A stopped vehicle does not turn, so whatever the gyro reads meanwhile is
+    # drift; integrated it would all land at one point of road. Crawling is left
+    # in: it can be a real turn (curvature_review/stop_yaw.md).
+    gz[route.imu_speed_mps < cfg.curvature.stationary_speed_mps] = 0.0
+    heading = np.concatenate([[0.0], np.cumsum(0.5 * (gz[1:] + gz[:-1]) * np.diff(times))])
+
+    # Heading as a function of distance needs distance to increase. While
+    # stopped it does not; the first sample of each stop stands for it.
+    dist = route.imu_dist_m
+    moving = np.concatenate([[True], np.diff(dist) > 0.0])
+    return dist[moving], heading[moving]
+
+
+def gps_radius_series(route: AlignedRoute, cfg: Settings) -> np.ndarray | None:
+    """The same windowed radius as radius_series, from GPS bearing instead of the gyro.
+
+    One value per IMU sample, so the two line up. Only fixes at or above
+    v_min_mps count: below it a receiver's course wanders. None when the
+    route carries no usable bearing (KITTI's GPS does not).
+    """
+    bearing = np.array(
+        [np.nan if fix.bearing_deg is None else fix.bearing_deg for fix in route.gps], dtype=float
+    )
+    usable = (route.gps_speed_mps >= cfg.curvature.v_min_mps) & np.isfinite(bearing)
+    usable &= np.concatenate([[True], np.diff(route.gps_dist_m) > 0.0])
+    if usable.sum() < 2:
+        return None
+    # Bearing is clockwise; negate to the gyro's counter-clockwise sense.
+    heading = -np.unwrap(np.radians(bearing[usable]))
+    return _window_radius(route, route.gps_dist_m[usable], heading, cfg)
+
+
+def _window_radius(
+    route: AlignedRoute, along_m: np.ndarray, heading: np.ndarray, cfg: Settings
+) -> np.ndarray:
+    """window_m over the heading change across the window centred at each IMU sample.
+
+    heading (radians) is given at distances along_m. NaN where the window runs
+    past either end of along_m, and where speed is below v_min_mps.
+    """
+    dist = route.imu_dist_m
+    half = cfg.curvature.window_m / 2.0
+    radii = np.full(dist.size, np.nan)
+    inside = (dist - half >= along_m[0]) & (dist + half <= along_m[-1])
+    turn = np.interp(dist + half, along_m, heading) - np.interp(dist - half, along_m, heading)
+    with np.errstate(divide="ignore"):
+        window = np.where(np.abs(turn) > 1e-12, cfg.curvature.window_m / np.abs(turn), _HUGE_RADIUS_M)
+    radii[inside] = np.clip(window[inside], 0.0, _HUGE_RADIUS_M)
+    return np.where(route.imu_speed_mps >= cfg.curvature.v_min_mps, radii, np.nan)
+
+
+LEFT, RIGHT = "left", "right"
+_STRAIGHT_M = 800.0  # iRAP curvature category 1 (straight or gently curving)
+
+
+@dataclass(frozen=True)
+class Curve:
+    """One bend sharper than threshold_m, located to the IMU sample, not the segment."""
+
+    start_m: float
+    end_m: float
+    direction: str  # LEFT or RIGHT
+    radius_m: float  # its sharpest window
+
+
+def find_curves(route: AlignedRoute, cfg: Settings, bias: float) -> list[Curve]:
+    """Each stretch of road whose windowed radius stays below threshold_m.
+
+    Gap-check needs where a bend starts and which way it turns, which the 100 m
+    segment cannot give: a curve pieced together from segments is placed to
+    within 100 m, too coarse for a sign 230 m before it or for JKR's 180 m
+    between the curves of a series. The extent is where the window centre is,
+    so it reads up to window_m / 2 early or late.
+
+    Two same-direction stretches closer than window_m are one bend whose radius
+    strayed above the threshold, or whose apex was driven too slowly to read
+    (NaN), unless the road between straightens out: radius reaching the iRAP
+    straight category (_STRAIGHT_M) over at least window_m / 2, which a single
+    noisy window cannot do. Those are two bends the same way (broken-back).
+    Opposite-direction ones are left apart: the inflection between them always
+    reads above the threshold.
+
+    The direction is the sign of the turn at the sharpest window, positive
+    (counter-clockwise) being a left turn. On the Samarahan routes GPS bearing
+    agreed on 131 of the 133 stretches it could read
+    (D:/FYP/recommendation_review/README.md).
+    """
+    if len(route.imu) < 2:
+        return []
+    radii = radius_series(route, cfg, bias)
+    along, heading = _gyro_heading(route, cfg, bias)
+    dist = route.imu_dist_m
+    half = cfg.curvature.window_m / 2.0
+    turn = np.interp(dist + half, along, heading) - np.interp(dist - half, along, heading)
+
+    sharp = np.nan_to_num(radii, nan=np.inf) < cfg.curvature.threshold_m
+    edges = np.flatnonzero(np.diff(np.concatenate([[0], sharp.astype(int), [0]])))
+    curves: list[Curve] = []
+    last_end = 0
+    for lo, end in zip(edges[::2], edges[1::2], strict=True):
+        sharpest = lo + int(np.argmin(radii[lo:end]))
+        curve = Curve(
+            start_m=float(dist[lo]),
+            end_m=float(dist[end - 1]),
+            direction=LEFT if turn[sharpest] > 0 else RIGHT,
+            radius_m=float(radii[sharpest]),
+        )
+        last = curves[-1] if curves else None
+        gap = curve.start_m - last.end_m if last is not None else np.inf
+        between = np.nanmax(radii[last_end:lo], initial=0.0)
+        straightens = gap >= half and bool(between >= _STRAIGHT_M)
+        last_end = end
+        if (
+            last is not None
+            and last.direction == curve.direction
+            and gap < cfg.curvature.window_m
+            and not straightens
+        ):
+            curves[-1] = Curve(
+                last.start_m, curve.end_m, last.direction, min(last.radius_m, curve.radius_m)
+            )
+        else:
+            curves.append(curve)
+    return curves
+
+
 def analyse_curvature(
     route: AlignedRoute, segments: list[Segment], cfg: Settings
 ) -> list[ModuleResult]:
     """Produce one ModuleResult per segment, aggregating by worst (smallest) radius."""
     bias = estimate_gyro_bias(route, cfg)
-    gz = np.array([sample.gz for sample in route.imu], dtype=float) - bias
     speed = route.imu_speed_mps
+    radii = radius_series(route, cfg, bias)
+    gps_radii = gps_radius_series(route, cfg)
 
     results: list[ModuleResult] = []
     for segment in segments:
         lo, hi = segment.imu_start, segment.imu_end
-        window_gz = gz[lo:hi]
         window_speed = speed[lo:hi]
 
-        if window_gz.size == 0:
+        if window_speed.size == 0:
             results.append(
                 ModuleResult(
                     module=MODULE_NAME,
@@ -124,35 +298,57 @@ def analyse_curvature(
             )
             continue
 
-        usable_gz = window_gz[usable]
-        usable_speed = window_speed[usable]
-
-        # Radius per usable sample, then take the worst (smallest) as the segment
-        # value, matching the iRAP rule that the highest-risk value codes the
-        # segment.
-        with np.errstate(divide="ignore", invalid="ignore"):
-            radii = np.where(
-                np.abs(usable_gz) > 1e-9,
-                usable_speed / np.abs(usable_gz),
-                _HUGE_RADIUS_M,
+        # Only windows lying wholly inside the segment code it; one centred
+        # nearer than window_m / 2 to an end would measure the neighbour's road.
+        dist = route.imu_dist_m[lo:hi]
+        half = cfg.curvature.window_m / 2.0
+        inner = (dist - half >= segment.start_m) & (dist + half <= segment.end_m)
+        window_radii = np.where(inner, radii[lo:hi], np.nan)
+        if np.isnan(window_radii).all():
+            results.append(
+                ModuleResult(
+                    module=MODULE_NAME,
+                    segment_id=segment.segment_id,
+                    flag=Flag.NOT_ASSESSED,
+                    metrics={"mean_speed_mps": mean_speed, "gyro_bias_rad_s": bias},
+                    notes=(
+                        f"No {cfg.curvature.window_m:.0f} m window of road driven at "
+                        f"or above {cfg.curvature.v_min_mps} m/s fits inside this "
+                        "segment."
+                    ),
+                )
             )
-        radii = np.clip(radii, 0.0, _HUGE_RADIUS_M)
-        worst_index = int(np.argmin(radii))
-        radius_m = float(radii[worst_index])
+            continue
 
-        flag = Flag.CRITICAL if radius_m < cfg.curvature.threshold_m else Flag.NORMAL
+        # The worst (smallest) radius codes the segment, matching the iRAP rule
+        # that the highest-risk value codes the segment. Gated samples are NaN.
+        worst_index = int(np.nanargmin(window_radii))
+        radius_m = float(window_radii[worst_index])
+
+        critical = radius_m < cfg.curvature.threshold_m
+        metrics = {
+            "radius_m": radius_m,
+            # The yaw rate that radius implies at that speed: the
+            # window's mean, not one (noisy) gyro sample.
+            "yaw_rate_rad_s": float(window_speed[worst_index] / radius_m),
+            "mean_speed_mps": mean_speed,
+            "gyro_bias_rad_s": bias,
+            "irap_category": float(irap_curvature_category(radius_m)),
+        }
+        if gps_radii is not None:
+            gps_window = np.where(inner, gps_radii[lo:hi], np.nan)
+            if not np.isnan(gps_window).all():
+                gps_radius_m = float(np.nanmin(gps_window))
+                metrics["gps_radius_m"] = gps_radius_m
+                gps_critical = gps_radius_m < cfg.curvature.threshold_m
+                metrics["needs_review"] = float(gps_critical != critical)
+
         results.append(
             ModuleResult(
                 module=MODULE_NAME,
                 segment_id=segment.segment_id,
-                flag=flag,
-                metrics={
-                    "radius_m": radius_m,
-                    "yaw_rate_rad_s": float(abs(usable_gz[worst_index])),
-                    "mean_speed_mps": mean_speed,
-                    "gyro_bias_rad_s": bias,
-                    "irap_category": float(irap_curvature_category(radius_m)),
-                },
+                flag=Flag.CRITICAL if critical else Flag.NORMAL,
+                metrics=metrics,
             )
         )
     return results

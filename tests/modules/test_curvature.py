@@ -1,15 +1,20 @@
 """Curvature is omega / v. Every test here pins one of its failure modes."""
 
 import math
+from datetime import timedelta
 
+import numpy as np
 import pytest
 
 from irap_screening.config import load_config
 from irap_screening.io.align import align_route
-from irap_screening.io.schema import Flag
+from irap_screening.io.schema import Flag, ImuSample
 from irap_screening.modules.curvature import (
+    LEFT,
+    RIGHT,
     analyse_curvature,
     estimate_gyro_bias,
+    find_curves,
     irap_curvature_category,
 )
 from irap_screening.segment import build_segments
@@ -58,7 +63,9 @@ def test_radius_below_threshold_is_critical():
 
 
 def test_radius_above_threshold_is_normal():
-    results, _ = _analyse(*curved_route(radius_m=800.0, arc_length_m=300.0))
+    # Not exactly 800: a windowed estimate is accurate to a fraction of a
+    # percent, so a fixture sitting on the threshold would flip on rounding.
+    results, _ = _analyse(*curved_route(radius_m=900.0, arc_length_m=300.0))
     assert results[0].flag is Flag.NORMAL
 
 
@@ -110,14 +117,14 @@ def test_injected_gyro_bias_is_removed():
     """2.4 deg/s of drift is the same size as the signal at the 400 m boundary."""
     bias = math.radians(2.4)
     frames, gps, imu = curved_route(
-        radius_m=800.0, arc_length_m=300.0, gyro_bias_rad_s=bias,
+        radius_m=900.0, arc_length_m=300.0, gyro_bias_rad_s=bias,
         stationary_prefix_s=3.0,
     )
-    uncorrected_radius = 16.7 / (16.7 / 800.0 + bias)
+    uncorrected_radius = 16.7 / (16.7 / 900.0 + bias)
     assert uncorrected_radius < 400.0, "test setup must actually flip the verdict"
 
     results, _ = _analyse(frames, gps, imu)
-    assert results[0].metrics["radius_m"] == pytest.approx(800.0, rel=0.10)
+    assert results[0].metrics["radius_m"] == pytest.approx(900.0, rel=0.10)
     assert results[0].flag is Flag.NORMAL
 
 
@@ -128,7 +135,7 @@ def test_stopped_samples_do_not_manufacture_a_hairpin():
     alone would let those samples through, so the gate is per sample.
     """
     frames, gps, imu = curved_route(
-        radius_m=800.0, arc_length_m=300.0, stationary_prefix_s=3.0
+        radius_m=900.0, arc_length_m=300.0, stationary_prefix_s=3.0
     )
     results, _ = _analyse(frames, gps, imu)
     assert results[0].metrics["radius_m"] > 400.0
@@ -158,3 +165,183 @@ def test_slow_driving_is_not_mistaken_for_stationary():
     frames, gps, imu = curved_route(radius_m=20.0, speed_mps=3.0, arc_length_m=60.0)
     route = align_route(frames, gps, imu)
     assert estimate_gyro_bias(route, load_config()) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_gyro_noise_on_a_straight_road_is_not_a_curve():
+    """Phone gyro noise (0.06 rad/s, as on the Samarahan routes) is not geometry.
+
+    Per sample, v / |noise| reads as a ~100 m curve on every segment; over a
+    window of road the noise averages out and the road reads straight.
+    """
+    frames, gps, imu = straight_route(length_m=500.0)
+    noise = np.random.default_rng(0).normal(0.0, 0.06, len(imu))
+    imu = [s.model_copy(update={"gz": s.gz + n}) for s, n in zip(imu, noise, strict=True)]
+    results, _ = _analyse(frames, gps, imu)
+    assert all(r.flag is Flag.NORMAL for r in results)
+
+
+def test_a_window_longer_than_the_route_is_not_assessed():
+    """No window of road fits: report not_assessed, never crash or guess."""
+    cfg = load_config(overrides=["curvature.window_m=1000"])
+    results, _ = _analyse(*straight_route(length_m=500.0), cfg=cfg)
+    assert results and all(r.flag is Flag.NOT_ASSESSED for r in results)
+    assert "window" in results[0].notes
+
+
+def test_a_curve_in_the_next_segment_does_not_code_this_one():
+    """The road turns 2 m into the second segment; the first stays straight.
+
+    A window centred 10 m before the boundary would reach 15 m into the curve
+    and read about 770 m, below the threshold. Only windows lying wholly
+    inside a segment may code it.
+    """
+    frames, gps, imu = curved_route(radius_m=200.0, arc_length_m=300.0)
+    speed = 16.7
+    t0 = imu[0].timestamp_utc
+    imu = [
+        s.model_copy(update={"gz": 0.0})
+        if (s.timestamp_utc - t0).total_seconds() * speed < 102.0 else s
+        for s in imu
+    ]
+    results, _ = _analyse(frames, gps, imu)
+    assert results[0].flag is Flag.NORMAL
+    assert results[1].flag is Flag.CRITICAL
+
+
+def _with_bearing(gps, bearing_at):
+    t0 = gps[0].timestamp_utc
+    return [
+        fix.model_copy(update={"bearing_deg": bearing_at((fix.timestamp_utc - t0).total_seconds())})
+        for fix in gps
+    ]
+
+
+def test_gps_bearing_that_agrees_does_not_ask_for_review():
+    frames, gps, imu = curved_route(radius_m=312.5, arc_length_m=300.0)
+    gps = _with_bearing(gps, lambda t: math.degrees(16.7 / 312.5 * t))
+    results, _ = _analyse(frames, gps, imu)
+    assert results[0].metrics["gps_radius_m"] == pytest.approx(312.5, rel=0.10)
+    assert results[0].metrics["needs_review"] == 0.0
+
+
+def test_gyro_and_gps_disagreeing_asks_for_review_but_the_gyro_decides():
+    """The gyro turns, the GPS course holds north: flagged, still coded by the gyro."""
+    frames, gps, imu = straight_route(length_m=500.0)
+    imu = [s.model_copy(update={"gz": 16.7 / 300.0}) for s in imu]
+    gps = _with_bearing(gps, lambda t: 0.0)
+    results, _ = _analyse(frames, gps, imu)
+    assert results[0].flag is Flag.CRITICAL
+    assert results[0].metrics["gps_radius_m"] > 800.0
+    assert results[0].metrics["needs_review"] == 1.0
+
+
+def test_no_gps_bearing_means_no_cross_check():
+    """KITTI's GPS carries no course: report the gyro alone, not a false agreement."""
+    results, _ = _analyse(*curved_route(radius_m=312.5, arc_length_m=300.0))
+    assert "gps_radius_m" not in results[0].metrics
+    assert "needs_review" not in results[0].metrics
+
+
+def test_yaw_read_while_stopped_is_not_a_turn():
+    """A straight road with a minute parked mid-way and the gyro drifting all the while.
+
+    The accelerometer shakes during the stop, as a handled phone does, so the bias
+    estimator declines and the drift stays in the signal.
+    """
+    frames, gps, imu = straight_route(length_m=500.0)
+    middle = gps[len(gps) // 2]
+    stop = timedelta(seconds=60)
+
+    def shifted(items):
+        return [
+            item.model_copy(update={"timestamp_utc": item.timestamp_utc + stop})
+            if item.timestamp_utc > middle.timestamp_utc else item
+            for item in items
+        ]
+
+    parked_gps = [
+        middle.model_copy(update={
+            "timestamp_utc": middle.timestamp_utc + timedelta(seconds=s), "speed_mps": 0.0,
+        })
+        for s in range(1, 60)
+    ]
+    parked_imu = [
+        ImuSample(
+            timestamp_utc=middle.timestamp_utc + timedelta(seconds=s / 10.0),
+            ax=1.0 if s % 2 else -1.0, ay=0.0, az=9.81, gx=0.0, gy=0.0, gz=0.02,
+        )
+        for s in range(10, 590)
+    ]
+    by_time = lambda item: item.timestamp_utc  # noqa: E731
+    gps = sorted(shifted(gps) + parked_gps, key=by_time)
+    imu = sorted(shifted(imu) + parked_imu, key=by_time)
+    results, _ = _analyse(frames, gps, imu)
+    assert all(r.flag is not Flag.CRITICAL for r in results)
+
+def _curves(frames, gps, imu):
+    cfg = load_config()
+    route = align_route(frames, gps, imu)
+    return find_curves(route, cfg, estimate_gyro_bias(route, cfg))
+
+
+def _turn_with(imu, gz_at):
+    """Replace each sample's yaw rate with gz_at(distance driven, gz)."""
+    speed = 16.7
+    t0 = imu[0].timestamp_utc
+    return [
+        s.model_copy(update={"gz": gz_at((s.timestamp_utc - t0).total_seconds() * speed, s.gz)})
+        for s in imu
+    ]
+
+
+def test_a_counter_clockwise_curve_is_one_left_curve_of_its_radius():
+    curves = _curves(*curved_route(radius_m=200.0, arc_length_m=300.0))
+    assert len(curves) == 1
+    assert curves[0].direction == LEFT
+    assert curves[0].radius_m == pytest.approx(200.0, rel=0.05)
+
+
+def test_a_clockwise_curve_is_a_right_curve():
+    frames, gps, imu = curved_route(radius_m=200.0, arc_length_m=300.0)
+    curves = _curves(frames, gps, _turn_with(imu, lambda d, gz: -gz))
+    assert [c.direction for c in curves] == [RIGHT]
+
+
+def test_a_straight_road_has_no_curves():
+    assert _curves(*straight_route(length_m=500.0)) == []
+
+
+def test_the_curve_is_located_to_the_sample_not_the_segment():
+    """The road turns from 120 m; the curve starts there, not at 100 m."""
+    frames, gps, imu = curved_route(radius_m=200.0, arc_length_m=300.0)
+    curves = _curves(frames, gps, _turn_with(imu, lambda d, gz: 0.0 if d < 120.0 else gz))
+    assert len(curves) == 1
+    # The window centre reads the turn up to window_m / 2 early.
+    assert 120.0 - 25.0 - 2.0 <= curves[0].start_m <= 120.0 + 2.0
+
+
+def test_a_short_straight_inside_a_bend_does_not_split_it():
+    """Same direction, closer than window_m: one bend that briefly eased.
+
+    A 30 m straight reads as a 30 m gap between the two stretches.
+    """
+    frames, gps, imu = curved_route(radius_m=200.0, arc_length_m=400.0)
+    curves = _curves(
+        frames, gps, _turn_with(imu, lambda d, gz: 0.0 if 180.0 <= d < 210.0 else gz)
+    )
+    assert len(curves) == 1
+
+
+def test_opposite_turns_are_two_curves():
+    frames, gps, imu = curved_route(radius_m=200.0, arc_length_m=400.0)
+    curves = _curves(frames, gps, _turn_with(imu, lambda d, gz: gz if d < 200.0 else -gz))
+    assert [c.direction for c in curves] == [LEFT, RIGHT]
+
+
+def test_a_straight_between_two_bends_the_same_way_keeps_them_apart():
+    """45 m of straight road reads above 800 m: two bends (broken-back), not one."""
+    frames, gps, imu = curved_route(radius_m=200.0, arc_length_m=400.0)
+    curves = _curves(
+        frames, gps, _turn_with(imu, lambda d, gz: 0.0 if 180.0 <= d < 225.0 else gz)
+    )
+    assert [c.direction for c in curves] == [LEFT, LEFT]

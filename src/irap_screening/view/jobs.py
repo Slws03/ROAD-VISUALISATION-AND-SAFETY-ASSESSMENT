@@ -24,7 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from irap_screening.config import Settings
+from irap_screening.config import Settings, flatten, load_config
 from irap_screening.view.export import add_route, is_route_dir
 
 Log = Callable[[str], None]
@@ -123,7 +123,7 @@ class JobRunner:
         with self._lock:
             return {**self._status, "log": list(self._log)}
 
-    def start(self, route_id: str, steps: list[Step]) -> None:
+    def start(self, route_id: str, steps: list[Step], kind: str = "upload") -> None:
         with self._lock:
             # ponytail: one job at a time; a queue if routes ever arrive
             # faster than they finish.
@@ -132,6 +132,7 @@ class JobRunner:
             self._log.clear()
             self._status = {
                 "state": "running",
+                "kind": kind,
                 "route_id": route_id,
                 "step": 0,
                 "steps": len(steps),
@@ -208,3 +209,75 @@ def pipeline_steps(upload: Upload, route_id: str, zip_path: Path) -> list[Step]:
         ("Sign detection", signs),
         ("Report", report),
     ]
+
+
+# Read by the detectors, not the report: their values are baked into the cached
+# detections, so changing them here would change nothing until the detectors
+# run again.
+DETECTOR_KEYS = ("sign.runner_conf", "sign.imgsz")
+
+
+@dataclass
+class Rebuild:
+    """What the viewer's config panel needs to re-run the report under new thresholds.
+
+    Only the CPU layer runs again, over each route's cached detections, so a
+    rebuild needs no model and takes seconds per route. Panel changes are
+    layered over the configuration the server started with and kept in memory:
+    restarting `irap view` returns to that configuration.
+    """
+
+    out_dir: Path
+    cfg: Settings
+    profile: Path | None = None
+    overrides: list[str] = field(default_factory=list)
+    upload: Upload | None = None
+    # The server's live route table, shared with the upload control, so a
+    # route uploaded this session is rebuilt too and stays in routes.json.
+    route_dirs: dict[str, Path] = field(default_factory=dict)
+    runner: JobRunner = field(default_factory=JobRunner)
+    panel: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.upload is not None:
+            # One runner: an upload and a rebuild both write the output directory.
+            self.runner = self.upload.runner
+
+    def state(self) -> dict:
+        """Every threshold now in force, and where each value came from."""
+        values = flatten(self.cfg.model_dump(mode="json"))
+        sources = {key: self.cfg.provenance.get(key, "default") for key in values}
+        sources.update(dict.fromkeys(self.panel, "viewer"))
+        return {"values": values, "sources": sources, "detector_keys": list(DETECTOR_KEYS)}
+
+    def apply(self, changes: dict[str, str]) -> None:
+        """Validate the changes and start re-running every route under them.
+
+        Raises ValueError, naming the problem, if a key is unknown, belongs to
+        a detector, or its value fails the configuration's own validation.
+        """
+        known = flatten(self.cfg.model_dump(mode="json"))
+        for key in changes:
+            if key not in known:
+                raise ValueError(f"unknown setting: {key}")
+            if key in DETECTOR_KEYS:
+                raise ValueError(f"{key} is read by the detector; re-run it to change this")
+        panel = {**self.panel, **{key: str(value) for key, value in changes.items()}}
+        # The same loader as the command line, so every range check applies.
+        cfg = load_config(
+            self.profile, [*self.overrides, *(f"{k}={v}" for k, v in panel.items())]
+        )
+        steps = [
+            (f"Report {route_id}", self._step(route_id, cfg))
+            for route_id in sorted(self.route_dirs)
+        ]
+        self.runner.start("config", steps, kind="config")
+        self.cfg, self.panel = cfg, panel
+        if self.upload is not None:
+            self.upload.cfg = cfg
+
+    def _step(self, route_id: str, cfg: Settings) -> Callable[[Log], None]:
+        def run(log: Log) -> None:
+            add_route(route_id, self.route_dirs[route_id], self.route_dirs, cfg, self.out_dir)
+
+        return run

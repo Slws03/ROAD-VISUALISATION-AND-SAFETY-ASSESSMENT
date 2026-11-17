@@ -160,7 +160,12 @@ def graded_route(
     length_m: float = 300.0,
     imu_hz: float = 50.0,
 ) -> tuple[list[Frame], list[GpsFix], list[ImuSample]]:
-    """A constant-grade slope. Accelerometer sees gravity tilted by the pitch angle."""
+    """A constant-grade slope. Accelerometer sees gravity tilted by the pitch angle.
+
+    Positive grade_pct climbs (altitude rises). Nose up, a real accelerometer
+    reads +g*sin(pitch) on its forward axis -- the specific force holding the
+    vehicle against gravity -- as KITTI's OXTS and a phone both do.
+    """
     pitch_rad = math.atan(grade_pct / 100.0)
     duration_s = length_m / speed_mps
     lat0, lon0 = 1.55, 110.35
@@ -186,7 +191,7 @@ def graded_route(
         imu.append(
             ImuSample(
                 timestamp_utc=T0 + timedelta(seconds=t),
-                ax=-9.81 * math.sin(pitch_rad),
+                ax=9.81 * math.sin(pitch_rad),
                 ay=0.0,
                 az=9.81 * math.cos(pitch_rad),
                 gx=0.0, gy=0.0, gz=0.0,
@@ -253,7 +258,7 @@ def spiked_grade_route(
         imu.append(
             ImuSample(
                 timestamp_utc=T0 + timedelta(seconds=t),
-                ax=-9.81 * math.sin(pitch_rad),
+                ax=9.81 * math.sin(pitch_rad),
                 ay=0.0,
                 az=9.81 * math.cos(pitch_rad),
                 gx=0.0, gy=0.0, gz=0.0,
@@ -320,7 +325,7 @@ def braking_route(
                 timestamp_utc=T0 + timedelta(seconds=t),
                 # Gravity projection plus the vehicle's own longitudinal
                 # acceleration, which is what the sensor actually reports.
-                ax=-9.81 * math.sin(pitch_rad) + accel,
+                ax=9.81 * math.sin(pitch_rad) + accel,
                 ay=0.0,
                 az=9.81 * math.cos(pitch_rad),
                 gx=0.0, gy=0.0, gz=0.0,

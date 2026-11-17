@@ -12,9 +12,21 @@ curve. Of those this pipeline sees signs and delineation only, so:
   own; this is deliberately looser than gap-check rule 1, which recommends
   both.
 
+The manual does not say where a sign must stand to count, so the searches are
+gap-check's: the advance sign 230 m (JKR ATJ 2B/85) before the entry of the
+curve, pieced together here from segments, and chevrons within the segment.
+Both reach curve_sign_lookahead_m further back, since a sign is placed at the
+photo it was detected in, taken before the camera reached it. Unlike
+gap-check, a stretch the photos do not cover counts as unsigned.
+
 Sight distance, lighting, advisory speed plates and telemetry-based speed
 behaviour are not observed, so a curve coded Adequate here may still be Poor
 on site.
+
+Each code carries a flag so the attribute colours the segment like a scored
+module: Poor is critical on a curve the curvature module flags critical, and
+normal on a milder one (a moderate curve is coded as the manual requires, but
+is below curvature.threshold_m). Adequate and Not applicable are normal.
 """
 
 from __future__ import annotations
@@ -31,6 +43,12 @@ from irap_screening.decision.gapcheck import (
 from irap_screening.io.schema import ExistenceResult, Flag, ModuleResult, Segment
 
 ADEQUATE, POOR, NOT_APPLICABLE = 1, 2, 3
+_FLAG = {
+    None: Flag.NOT_ASSESSED,
+    ADEQUATE: Flag.NORMAL,
+    POOR: Flag.CRITICAL,
+    NOT_APPLICABLE: Flag.NORMAL,
+}
 
 
 def _is_curving(result: ModuleResult) -> bool:
@@ -44,7 +62,7 @@ def code_quality_of_curve(
     existence: list[ExistenceResult],
     cfg: Settings,
 ) -> dict[str, dict[str, Any]]:
-    """Return {segment_id: {"code": 1|2|3|None, "basis": str}}."""
+    """Return {segment_id: {"code": 1|2|3|None, "basis": str, "flag": str}}."""
     curvature = _by_segment(module_results.get("curvature", []))
     delineation = _by_segment(module_results.get("delineation", []))
     spans = curve_spans(segments, module_results, is_curve=_is_curving)
@@ -73,13 +91,16 @@ def code_quality_of_curve(
 
         # Same placement as rule 1: one sign at the curve's entry.
         window_centre = spans[sid][0] - cfg.gapcheck.curve_sign_distance_m
+        tolerance = cfg.gapcheck.curve_sign_tolerance_m
+        lookahead = cfg.gapcheck.curve_sign_lookahead_m
         advance = any(
             sign.cls in ADVANCE_BEND_CLASSES
-            and abs(sign.at_m - window_centre) <= cfg.gapcheck.curve_sign_tolerance_m
+            and window_centre - tolerance - lookahead <= sign.at_m <= window_centre + tolerance
             for sign in signs
         )
         chevron = any(
-            sign.cls == CHEVRON_CLASS and segment.start_m <= sign.at_m < segment.end_m
+            sign.cls == CHEVRON_CLASS
+            and segment.start_m - lookahead <= sign.at_m < segment.end_m
             for sign in signs
         )
         if advance or chevron:
@@ -97,4 +118,13 @@ def code_quality_of_curve(
                 "code": POOR,
                 "basis": "No advance bend warning sign or chevron markers were detected.",
             }
+    for sid, entry in coded.items():
+        flag = _FLAG[entry["code"]]
+        if flag is Flag.CRITICAL and curvature[sid].flag is not Flag.CRITICAL:
+            flag = Flag.NORMAL
+            entry["basis"] += (
+                " Not flagged critical: the curve is no sharper than the "
+                f"{cfg.curvature.threshold_m:.0f} m curvature threshold."
+            )
+        entry["flag"] = flag.value
     return coded

@@ -15,7 +15,7 @@ import typer
 from irap_screening.config import Settings, load_config
 from irap_screening.decision.report import write_report
 from irap_screening.pipeline import run_pipeline
-from irap_screening.view.jobs import Upload
+from irap_screening.view.jobs import Rebuild, Upload
 
 app = typer.Typer(help="Dashcam and IMU based iRAP road safety screening.")
 
@@ -238,7 +238,10 @@ def view(
     upload = _upload_settings(
         route, out_dir, cfg, config, set_, weights, clrernet_python, sign_device
     )
-    serve_routes(out_dir, routes, port=port, open_browser=not no_open, upload=upload)
+    rebuild = Rebuild(out_dir, cfg, profile=config, overrides=list(set_ or []), upload=upload)
+    serve_routes(
+        out_dir, routes, port=port, open_browser=not no_open, upload=upload, rebuild=rebuild
+    )
 
 
 if __name__ == "__main__":

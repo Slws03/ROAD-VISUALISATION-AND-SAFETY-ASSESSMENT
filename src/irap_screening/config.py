@@ -27,20 +27,8 @@ class _Section(BaseModel):
     model_config = {"extra": "forbid"}
 
 
-class AggregationSettings(_Section):
-    lane: str = "max_risk"
-    curvature: str = "max_risk"
-    grade: str = "max_risk"
-    condition: str = "count_then_classify"
-
-
 class SegmentSettings(_Section):
     length_m: PositiveFloat = 100.0
-    aggregation: AggregationSettings = Field(default_factory=AggregationSettings)
-
-
-class SamplingSettings(_Section):
-    target_spacing_m: PositiveFloat = 20.0
 
 
 class CurvatureSettings(_Section):
@@ -48,31 +36,24 @@ class CurvatureSettings(_Section):
     v_min_mps: PositiveFloat = 5.0
     stationary_speed_mps: PositiveFloat = 0.5
     stationary_accel_var: PositiveFloat = 0.05
+    window_m: PositiveFloat = 50.0
 
 
 class GradeSettings(_Section):
     threshold_pct: PositiveFloat = 7.5
-    comp_filter_alpha: float = Field(default=0.98, gt=0.0, lt=1.0)
+    window_m: PositiveFloat = 30.0
+    gps_max_step_pct: PositiveFloat = 20.0
 
 
 class LaneSettings(_Section):
     clrernet_conf: float = Field(default=0.41, ge=0.0, le=1.0)
     contrast_percentile: float = Field(default=85.0, gt=0.0, le=100.0)
     min_detection_rate: float = Field(default=0.5, ge=0.0, le=1.0)
-    weber_adequate: float = Field(default=0.35, ge=0.0)
+    weber_adequate: float = Field(default=0.25, ge=0.0)
+    min_visible_share: float = Field(default=0.5, gt=0.0, le=1.0)
+    min_lines_per_frame: float = Field(default=2.0, ge=0.0)
     bg_window: PositiveInt = 81
-
-
-class DoubleLineSettings(_Section):
-    window_steps: list[PositiveInt] = Field(default_factory=lambda: [50, 90, 130, 180, 240])
-    bg_window: PositiveInt = 81
-    contrast_thresh: float = Field(default=0.4, ge=0.0)
-    min_width: PositiveInt = 3
-    min_gap_merge: PositiveInt = 2
-    min_gap_px: PositiveInt = 3
-    max_gap_fraction: float = Field(default=0.9, gt=0.0, le=1.0)
-    max_gap_cap_px: PositiveInt = 150
-    anchor_tol_px: PositiveInt = 20
+    peak_window_frac: float = Field(default=0.005, ge=0.0, lt=0.5)
 
 
 class SignSettings(_Section):
@@ -97,58 +78,31 @@ class SignSettings(_Section):
         return self
 
 
-class IpmSettings(_Section):
-    """Ground-plane projection parameters. No monocular depth network involved.
-
-    camera_height_m is a hard prerequisite for width estimation. When it is None
-    the condition module still counts and locates defects but reports no width.
-    """
-
-    camera_height_m: PositiveFloat | None = None
-    fx: PositiveFloat | None = None
-    fy: PositiveFloat | None = None
-    cx: float | None = None
-    cy: float | None = None
-    max_range_m: PositiveFloat = 15.0
-
-    def is_complete(self) -> bool:
-        return None not in (self.camera_height_m, self.fx, self.fy, self.cx, self.cy)
-
-
-class ConditionSettings(_Section):
-    yolo_conf: float = Field(default=0.35, ge=0.0, le=1.0)
-    width_threshold_cm: PositiveFloat = 20.0
-    count_poor: PositiveInt = 5
-    count_medium: PositiveInt = 1
-    ipm: IpmSettings = Field(default_factory=IpmSettings)
-
-
 class GapCheckSettings(_Section):
     curve_sign_distance_m: PositiveFloat = 230.0
     curve_sign_tolerance_m: PositiveFloat = 50.0
+    curve_sign_lookahead_m: PositiveFloat = 50.0
+    curve_series_gap_m: PositiveFloat = 180.0
 
 
 class Settings(_Section):
 
     segment: SegmentSettings = Field(default_factory=SegmentSettings)
-    sampling: SamplingSettings = Field(default_factory=SamplingSettings)
     curvature: CurvatureSettings = Field(default_factory=CurvatureSettings)
     grade: GradeSettings = Field(default_factory=GradeSettings)
     lane: LaneSettings = Field(default_factory=LaneSettings)
-    doubleline: DoubleLineSettings = Field(default_factory=DoubleLineSettings)
     sign: SignSettings = Field(default_factory=SignSettings)
-    condition: ConditionSettings = Field(default_factory=ConditionSettings)
     gapcheck: GapCheckSettings = Field(default_factory=GapCheckSettings)
 
     provenance: dict[str, str] = Field(default_factory=dict, exclude=True)
 
 
-def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+def flatten(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     flat: dict[str, Any] = {}
     for key, value in data.items():
         dotted = f"{prefix}{key}"
         if isinstance(value, dict):
-            flat.update(_flatten(value, prefix=f"{dotted}."))
+            flat.update(flatten(value, prefix=f"{dotted}."))
         else:
             flat[dotted] = value
     return flat
@@ -190,14 +144,14 @@ def load_config(
     with default_path.open(encoding="utf-8") as handle:
         base = yaml.safe_load(handle) or {}
 
-    provenance = dict.fromkeys(_flatten(base), "default")
+    provenance = dict.fromkeys(flatten(base), "default")
     merged = base
 
     if profile is not None:
         with Path(profile).open(encoding="utf-8") as handle:
             profile_data = yaml.safe_load(handle) or {}
         merged = _deep_merge(merged, profile_data)
-        provenance.update(dict.fromkeys(_flatten(profile_data), "profile"))
+        provenance.update(dict.fromkeys(flatten(profile_data), "profile"))
 
     for item in overrides or []:
         dotted, value = _parse_override(item)

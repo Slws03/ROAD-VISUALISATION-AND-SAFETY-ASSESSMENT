@@ -30,7 +30,7 @@ from irap_screening.io.schema import (
 )
 
 SCHEMA_VERSION = "1.0"
-SCORING_MODULES = ("curvature", "grade", "delineation", "condition")
+SCORING_MODULES = ("curvature", "grade", "delineation")
 
 
 def _index(results: list[ModuleResult]) -> dict[str, ModuleResult]:
@@ -84,19 +84,17 @@ def build_report(
                 coverage[name]["not_assessed"] += 1
                 uncovered = True
 
-        # Derived attribute, not a scoring module: it has no flag and does not
-        # count toward coverage.
+        # Derived attribute, not a scoring module: its flag colours the
+        # segment, but it does not count toward coverage.
         if quality_of_curve is not None:
             record["quality_of_curve"] = quality_of_curve.get(
-                segment.segment_id, {"code": None, "basis": ""}
+                segment.segment_id,
+                {"code": None, "basis": "", "flag": Flag.NOT_ASSESSED.value},
             )
 
         entry = existence_by_segment.get(segment.segment_id)
         record["signs"] = (
             [sign.model_dump() for sign in entry.signs] if entry else []
-        )
-        record["double_line"] = (
-            entry.double_line.model_dump() if entry else {"present": False}
         )
 
         record["recommendations"] = [
@@ -142,6 +140,35 @@ def to_geojson(report: dict[str, Any]) -> dict[str, Any]:
     return {"type": "FeatureCollection", "features": features}
 
 
+def sites(segment_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each place that carries a recommendation, in order along the route.
+
+    A curve series or marking stretch is one site however many segments carry
+    it; a recommendation without a series_id is a site of its own segment.
+    Listed by position only: ranking the sites would weigh one hazard against
+    another, which nothing here gives grounds for.
+    """
+    found: dict[str, dict[str, Any]] = {}
+    for record in segment_records:
+        for recommendation in record["recommendations"]:
+            trigger = recommendation["trigger"]
+            series = trigger.get("series_id")
+            key = series or f"{record['segment_id']}:{recommendation['rule']}"
+            if key not in found:
+                start = trigger.get("start_m", record["start_m"])
+                end = trigger.get("end_m", record["end_m"])
+                found[key] = {
+                    "id": series or record["segment_id"],
+                    "rule": recommendation["rule"],
+                    "start_m": trigger.get("curve_start_m", start),
+                    "end_m": trigger.get("curve_end_m", end),
+                    "segment_ids": [],
+                    "recommendation": recommendation,
+                }
+            found[key]["segment_ids"].append(record["segment_id"])
+    return sorted(found.values(), key=lambda site: site["start_m"])
+
+
 def to_markdown(report: dict[str, Any]) -> str:
     """Human-readable summary listing only segments that carry a recommendation."""
     lines = [
@@ -166,6 +193,24 @@ def to_markdown(report: dict[str, Any]) -> str:
         lines.append("No gaps found: every hazardous segment already has its mitigation.")
         return "\n".join(lines) + "\n"
 
+    listed = sites(flagged)
+    lines += [
+        f"### Sites ({len(listed)})",
+        "",
+        "| Site | Where | Rule | Segments |",
+        "| --- | --- | --- | --- |",
+    ]
+    for site in listed:
+        ids = site["segment_ids"]
+        span = ids[0] if len(ids) == 1 else f"{ids[0]} to {ids[-1]} ({len(ids)})"
+        where = f"{site['start_m']:.0f}-{site['end_m']:.0f} m"
+        lines.append(f"| {site['id']} | {where} | {site['rule']} | {span} |")
+    lines.append("")
+
+    # A curve series' or marking stretch's recommendation is carried by every
+    # segment it crosses; it is written out once, at the first, and referred
+    # to afterwards.
+    first_segment_of: dict[str, str] = {}
     for record in flagged:
         seg_id = record["segment_id"]
         start = record["start_m"]
@@ -173,6 +218,15 @@ def to_markdown(report: dict[str, Any]) -> str:
         lines.append(f"### {seg_id} ({start:.0f}-{end:.0f} m)")
         lines.append("")
         for recommendation in record["recommendations"]:
+            series = recommendation["trigger"].get("series_id")
+            if series in first_segment_of:
+                lines.append(
+                    f"- {recommendation['rule']} - {series}, "
+                    f"see {first_segment_of[series]}."
+                )
+                continue
+            if series is not None:
+                first_segment_of[series] = seg_id
             missing = ", ".join(recommendation["missing"]) or "none"
             # text already names the missing mitigations in a full sentence; fall
             # back to the bare list only when a rule supplies no text.

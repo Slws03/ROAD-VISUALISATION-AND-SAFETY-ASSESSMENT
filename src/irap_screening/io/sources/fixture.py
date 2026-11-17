@@ -56,6 +56,7 @@ class FixtureSource(RouteSource):
                 speed_mps=_optional_float(row, "speed_mps"),
                 altitude=_optional_float(row, "altitude"),
                 hdop=_optional_float(row, "hdop"),
+                bearing_deg=_optional_float(row, "bearing_deg"),
             )
             for row in self._rows("gps.csv")
         ]

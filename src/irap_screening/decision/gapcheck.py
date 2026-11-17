@@ -8,17 +8,24 @@ no recommendation.
 
 The three mitigations occupy different spaces and are checked differently:
 
-- Advance bend sign: a point 230 m before the curve entry (JKR), with tolerance.
-- Chevron: runs along the curve, so it is checked by overlap with the segment.
-- No-overtaking control: covers the hazardous stretch, also checked by overlap.
+- Advance warning sign: one per series of curves (JKR ATJ 2B/85 cl. 2.3,
+  curves closer than 180 m), 230 m before the first curve's tangent point,
+  with tolerance. The series also decides which sign JKR calls for.
+- Chevron: runs along a curve, so it is checked on each curve of the series.
+- Lane marking: the delineation module's own finding. Adjacent segments it
+  flags critical are one stretch to repaint, with one recommendation.
 
-Checking chevrons or double lines upstream would be wrong; they belong inside
-the hazardous stretch, not before it.
+Checking chevrons upstream would be wrong; they belong inside the curve, not
+before it.
+
+A sign is placed at the photo it was detected in (SignRecord.at_m), which is
+before the sign itself: the camera sees it ahead. Searches therefore reach
+curve_sign_lookahead_m further back.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from irap_screening.config import Settings
 from irap_screening.io.schema import (
@@ -29,12 +36,12 @@ from irap_screening.io.schema import (
     Segment,
     SignRecord,
 )
+from irap_screening.modules.curvature import RIGHT, Curve
 
-MITIGATIONS = ("advance_bend_sign", "chevron", "no_overtaking_sign", "double_line")
+MITIGATIONS = ("advance_bend_sign", "chevron", "visible_marking")
 
 ADVANCE_BEND_CLASSES = frozenset({"Bend", "Double Bend"})
 CHEVRON_CLASS = "Chevron"
-NO_OVERTAKING_CLASS = "No overtaking"
 
 
 def _is_critical(result: ModuleResult) -> bool:
@@ -96,6 +103,170 @@ def _flag_of(
     return entry.flag if entry is not None else Flag.NOT_ASSESSED
 
 
+def _overlaps(segment: Segment, start_m: float, end_m: float) -> bool:
+    return segment.start_m < end_m and segment.end_m > start_m
+
+
+def curve_series(curves: list[Curve], cfg: Settings) -> list[list[Curve]]:
+    """Group consecutive curves closer than curve_series_gap_m into one series."""
+    series: list[list[Curve]] = []
+    for curve in curves:
+        if series and curve.start_m - series[-1][-1].end_m < cfg.gapcheck.curve_series_gap_m:
+            series[-1].append(curve)
+        else:
+            series.append([curve])
+    return series
+
+
+def jkr_warning_sign(series: list[Curve]) -> str:
+    """The warning sign ATJ 2B/85 cl. 2.3 names for a series of curves.
+
+    One curve: Curve sign WD.10a (right) / WD.10b (left). Two curves turning
+    opposite ways: Reverse Curve WD.2a (right first) / WD.2b (left first).
+    Anything else, including two curves the same way: Winding Road WD.11.
+    """
+    first = series[0].direction
+    if len(series) == 1:
+        return "WD.10a" if first == RIGHT else "WD.10b"
+    if len(series) == 2 and series[1].direction != first:
+        return "WD.2a" if first == RIGHT else "WD.2b"
+    return "WD.11"
+
+
+PRESENT, MISSING, UNCHECKED = "present", "missing", "unchecked"
+
+
+def _advance_sign_status(
+    series_start_m: float, signs: list[SignRecord], frame_m: Sequence[float], cfg: Settings
+) -> str:
+    """Whether an advance warning sign was found near its JKR position.
+
+    Any bend warning class counts: the detector cannot tell WD.10a from WD.10b
+    and has no Winding Road class. Unchecked when the photos do not cover the
+    search stretch, e.g. it lies before the route starts.
+    """
+    point = series_start_m - cfg.gapcheck.curve_sign_distance_m
+    lo = point - cfg.gapcheck.curve_sign_tolerance_m - cfg.gapcheck.curve_sign_lookahead_m
+    hi = point + cfg.gapcheck.curve_sign_tolerance_m
+    if any(sign.cls in ADVANCE_BEND_CLASSES and lo <= sign.at_m <= hi for sign in signs):
+        return PRESENT
+    covered = len(frame_m) > 0 and min(frame_m) <= lo and any(lo <= m <= hi for m in frame_m)
+    return MISSING if covered else UNCHECKED
+
+
+def _curve_recommendation(
+    number: int,
+    series: list[Curve],
+    signs: list[SignRecord],
+    frame_m: Sequence[float],
+    cfg: Settings,
+) -> Recommendation | None:
+    """Rule 1 for one series: an advance warning sign, and chevrons on every curve."""
+    start_m, end_m = series[0].start_m, series[-1].end_m
+    lookahead = cfg.gapcheck.curve_sign_lookahead_m
+    without_chevrons = sum(
+        not any(
+            sign.cls == CHEVRON_CLASS and curve.start_m - lookahead <= sign.at_m <= curve.end_m
+            for sign in signs
+        )
+        for curve in series
+    )
+    status = {
+        "advance_bend_sign": _advance_sign_status(start_m, signs, frame_m, cfg),
+        "chevron": MISSING if without_chevrons else PRESENT,
+    }
+    missing = [name for name, state in status.items() if state == MISSING]
+    unchecked = [name for name, state in status.items() if state == UNCHECKED]
+    if not missing and not unchecked:
+        return None
+
+    code = jkr_warning_sign(series)
+    radius = min(curve.radius_m for curve in series)
+    sign_at_m = start_m - cfg.gapcheck.curve_sign_distance_m
+    text = (
+        f"Curve series S{number:02d} ({len(series)} curve(s), {start_m:.0f}-{end_m:.0f} m, "
+        f"sharpest R={radius:.0f} m): JKR calls for {code} at {sign_at_m:.0f} m."
+    )
+    if missing:
+        text += f" Missing: {', '.join(missing)}."
+    if unchecked:
+        text += f" Could not be checked: {', '.join(unchecked)}."
+    return Recommendation(
+        rule="curve_warning_incomplete",
+        trigger={
+            "module": "curvature",
+            "series_id": f"S{number:02d}",
+            "curve_start_m": start_m,
+            "curve_end_m": end_m,
+            "radius_m": radius,
+            "curves": float(len(series)),
+            "first_direction": series[0].direction,
+            "sign_code": code,
+            "sign_at_m": sign_at_m,
+            "curves_without_chevrons": float(without_chevrons),
+        },
+        missing=missing,
+        present=[name for name, state in status.items() if state == PRESENT],
+        unchecked=unchecked,
+        text=text,
+    )
+
+
+def _marking_recommendation(
+    number: int,
+    stretch: list[Segment],
+    module_results: dict[str, list[ModuleResult]],
+    cfg: Settings,
+) -> Recommendation:
+    """Rule 3 for one stretch of adjacent segments with poor delineation.
+
+    The detector cannot tell a worn line from an unmarked road edge, so the
+    recommendation does not say which: repaint, or mark where there is none.
+    """
+    def summed(metric: str) -> float:
+        return sum(
+            _metric_of(module_results, "delineation", s.segment_id, metric) or 0.0
+            for s in stretch
+        )
+
+    visible, total = summed("lines_visible"), summed("lines_total")
+    # Segments condemned by the line count (lane.py), whatever their contrast.
+    medians = [
+        _metric_of(module_results, "delineation", s.segment_id, "median_lines_per_frame")
+        for s in stretch
+    ]
+    few = sum(1 for m in medians if m is not None and m < cfg.lane.min_lines_per_frame)
+    lead = "Most photos" if few == len(stretch) else f"In {few} of its {len(stretch)} segments, most photos"
+    few_text = (
+        f" {lead} show fewer than two lines, so centre and edge lines "
+        "cannot both be there."
+        if few
+        else ""
+    )
+    start_m, end_m = stretch[0].start_m, stretch[-1].end_m
+    return Recommendation(
+        rule="lane_marking_poor",
+        trigger={
+            "module": "delineation",
+            "series_id": f"D{number:02d}",
+            "start_m": start_m,
+            "end_m": end_m,
+            "segments": float(len(stretch)),
+            "lines_visible": visible,
+            "lines_total": total,
+            "segments_few_lines": float(few),
+            "contrast_threshold": cfg.lane.weber_adequate,
+        },
+        missing=["visible_marking"],
+        present=[],
+        text=(
+            f"Stretch D{number:02d} ({start_m:.0f}-{end_m:.0f} m): {visible:.0f} of "
+            f"{total:.0f} lines detected across its photos clearly visible.{few_text} Repaint, or mark "
+            "where there is none, after a site check."
+        ),
+    )
+
+
 def _metric_of(
     results: dict[str, list[ModuleResult]], module: str, segment_id: str, key: str
 ) -> float | None:
@@ -108,98 +279,51 @@ def run_gapcheck(
     module_results: dict[str, list[ModuleResult]],
     existence: list[ExistenceResult],
     cfg: Settings,
+    curves: list[Curve],
+    frame_m: Sequence[float],
 ) -> dict[str, list[Recommendation]]:
-    """Apply rules 1 and 2 and return recommendations keyed by segment id."""
-    existence_by_segment = {entry.segment_id: entry for entry in existence}
+    """Apply rules 1 to 3 and return recommendations keyed by segment id.
+
+    curves are find_curves' bends; frame_m is where each photo was taken.
+    """
     all_signs: list[SignRecord] = [sign for entry in existence for sign in entry.signs]
 
     recommendations: dict[str, list[Recommendation]] = {s.segment_id: [] for s in segments}
-    spans = curve_spans(segments, module_results)
 
+    # Rule 1: a series of critical curves needs an advance warning sign AND
+    # chevrons on each curve. A curve counts where it overlaps a segment the
+    # curvature module flags critical, so the two never disagree; not_assessed
+    # is not critical: it means unevaluated, not safe. One recommendation per
+    # series, carried by every critical segment one of its curves crosses; a
+    # normal segment a curve's tail reaches into does not carry it.
+    critical = [
+        s for s in segments
+        if _flag_of(module_results, "curvature", s.segment_id) is Flag.CRITICAL
+    ]
+    kept = [c for c in curves if any(_overlaps(s, c.start_m, c.end_m) for s in critical)]
+    for number, series in enumerate(curve_series(kept, cfg), start=1):
+        recommendation = _curve_recommendation(number, series, all_signs, frame_m, cfg)
+        if recommendation is None:
+            continue
+        for segment in critical:
+            if any(_overlaps(segment, c.start_m, c.end_m) for c in series):
+                recommendations[segment.segment_id].append(recommendation)
+
+    # Rule 3: poor delineation needs the lines repainted. Adjacent poor
+    # segments are one stretch; a normal or unassessed one ends it.
+    stretches: list[list[Segment]] = []
+    run: list[Segment] = []
     for segment in segments:
-        curvature_flag = _flag_of(module_results, "curvature", segment.segment_id)
-        grade_flag = _flag_of(module_results, "grade", segment.segment_id)
-        entry = existence_by_segment.get(segment.segment_id)
-
-        # Rule 1: a critical curve needs an advance warning sign AND chevrons.
-        # not_assessed is skipped explicitly: it means unevaluated, not safe.
-        if curvature_flag is Flag.CRITICAL:
-            curve_start, curve_end = spans[segment.segment_id]
-            # Measured from the curve's entry, not this unit's start: consecutive
-            # critical units are one bend, and one sign warns of all of them.
-            window_centre = curve_start - cfg.gapcheck.curve_sign_distance_m
-            tolerance = cfg.gapcheck.curve_sign_tolerance_m
-            advance_present = any(
-                sign.cls in ADVANCE_BEND_CLASSES
-                and abs(sign.at_m - window_centre) <= tolerance
-                for sign in all_signs
-            )
-            chevron_present = any(
-                sign.cls == CHEVRON_CLASS and segment.start_m <= sign.at_m < segment.end_m
-                for sign in all_signs
-            )
-
-            missing = [
-                name
-                for name, ok in (
-                    ("advance_bend_sign", advance_present),
-                    ("chevron", chevron_present),
-                )
-                if not ok
-            ]
-            present = [
-                name
-                for name, ok in (
-                    ("advance_bend_sign", advance_present),
-                    ("chevron", chevron_present),
-                )
-                if ok
-            ]
-            if missing:
-                radius = _metric_of(module_results, "curvature", segment.segment_id, "radius_m")
-                recommendations[segment.segment_id].append(
-                    Recommendation(
-                        rule="curve_warning_incomplete",
-                        trigger={
-                            "module": "curvature",
-                            "radius_m": radius or 0.0,
-                            "curve_start_m": curve_start,
-                            "curve_end_m": curve_end,
-                        },
-                        missing=missing,
-                        present=present,
-                        text=(
-                            f"Curve (R={radius:.0f} m) is missing: {', '.join(missing)}."
-                            if radius
-                            else f"Critical curve is missing: {', '.join(missing)}."
-                        ),
-                    )
-                )
-
-        # Rule 2: a critical grade needs no-overtaking control, sign or paint.
-        if grade_flag is Flag.CRITICAL:
-            sign_present = any(
-                sign.cls == NO_OVERTAKING_CLASS
-                and segment.start_m <= sign.at_m < segment.end_m
-                for sign in all_signs
-            )
-            paint_present = bool(entry and entry.double_line.present)
-
-            if not (sign_present or paint_present):
-                grade_pct = _metric_of(module_results, "grade", segment.segment_id, "grade_pct")
-                recommendations[segment.segment_id].append(
-                    Recommendation(
-                        rule="grade_overtaking_control_missing",
-                        trigger={"module": "grade", "grade_pct": grade_pct or 0.0},
-                        missing=["no_overtaking_sign", "double_line"],
-                        present=[],
-                        text=(
-                            f"Steep grade ({grade_pct:.1f} percent) has no overtaking "
-                            "control: neither a No overtaking sign nor a double line."
-                            if grade_pct
-                            else "Steep grade has no overtaking control."
-                        ),
-                    )
-                )
+        if _flag_of(module_results, "delineation", segment.segment_id) is Flag.CRITICAL:
+            run.append(segment)
+        elif run:
+            stretches.append(run)
+            run = []
+    if run:
+        stretches.append(run)
+    for number, stretch in enumerate(stretches, start=1):
+        recommendation = _marking_recommendation(number, stretch, module_results, cfg)
+        for segment in stretch:
+            recommendations[segment.segment_id].append(recommendation)
 
     return recommendations
