@@ -1,7 +1,8 @@
 # iRAP Screening Pipeline
 
-A low-cost screening tool that turns dashcam imagery and smartphone IMU logs
-into per-segment iRAP mid-block attribute flags and gap-based recommendations.
+A low-cost screening tool that turns one smartphone's camera stills, GPS and
+IMU logs into per-segment iRAP mid-block codes (delineation, curvature, grade,
+quality of curve) and gap-based recommendations that follow JKR ATJ 2B/85.
 
 ## Architecture
 
@@ -21,6 +22,20 @@ uv run irap report --route fixtures/route_demo
 
 This runs the full decision layer against the committed fixture. No GPU, no
 external data.
+
+## Route layout
+
+A route directory holds `frames/`, `frames.csv`, `gps.csv` and `imu.csv`. The
+detectors add `detections/lane.jsonl` and `detections/sign.jsonl`. Converters
+in `scripts/` produce this layout from raw data:
+
+| Script | Source |
+| --- | --- |
+| `steven_to_route.py` | Neoun multi-report export with gyroscope; levels the IMU on flat road |
+| `neoun_to_route.py` | Single Neoun RPT-* report, accelerometer only; curvature from GPS bearing |
+| `kitti_to_route.py` | KITTI raw drive (oxts) |
+| `make_fixture.py` | Rebuilds `fixtures/route_demo` |
+| `paste_signs.py` | Composites signs into a copy of a route (synthetic scenario only) |
 
 ## Commands
 
@@ -134,15 +149,23 @@ Output defaults beside the data it describes -- `DIR/out` for the report,
 
 | Module | iRAP attribute | Method |
 | --- | --- | --- |
-| Lane marking | Delineation | Weber contrast at CLRerNet lane points |
-| Curvature | Curvature | kappa = omega / v, gyro bias corrected, low-speed gated |
-| Grade | Grade | Complementary-filter pitch from accelerometer |
-| Sign and marking | (supporting) | Existence facts for gap-check only; produces no flag |
+| `modules/lane.py` | Delineation | Weber contrast at CLRerNet lane points. Poor when under half of a segment's lines reach 0.25, or the median frame shows fewer than 2 lines |
+| `modules/curvature.py` | Curvature | Heading change from the bias-corrected gyro over a 50 m window, sharpest window inside the segment; critical below 400 m; GPS bearing cross-check |
+| `modules/grade.py` | Grade | Accelerometer pitch with dv/dt from speed removed, axes averaged over 30 m; critical at 7.5% held over 10 m; no gyro; GPS altitude cross-check |
+| `modules/marking.py` | (supporting) | Accepted sign records per segment for gap-check; produces no flag |
+| `decision/curve_quality.py` | Quality of curve | N/A where the radius is 800 m or more; Poor where delineation is poor; else Adequate with an advance sign or chevrons |
+| `decision/gapcheck.py` | (recommendations) | Rule 1: curve series (< 180 m apart) need one JKR sign 230 m ahead; chevrons are checked on each curve. Rule 2: adjacent poor-delineation segments form one stretch to repaint |
 
 ## Known limitations
 
-- Curvature (400 m) and grade (7.5 percent) thresholds are provisional, pending
-  sensitivity analysis.
+- The curvature window (50 m), grade window (30 m) and delineation thresholds
+  were tuned on the 14 Samarahan routes and KITTI drive 0042 and have not been
+  tested on held-out routes. `configs/default.yaml` records the evidence for
+  each value.
+- Delineation counts lines but does not identify the centre line, so a narrow
+  road with two edge lines and no centre line reads Adequate.
+- The sign weight has no Winding Road (WD.11) class; such signs are detected as
+  Other and do not count as an advance sign.
 - Advance warning signs are checked at a point 230 m before the first curve of a
   series, so a series within the first 230 m of a recorded route has no photos
   of its sign's position. Its advance sign is reported `unchecked`, not missing,
