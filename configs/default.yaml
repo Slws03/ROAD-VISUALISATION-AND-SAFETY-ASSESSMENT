@@ -6,7 +6,7 @@ segment:
 
 curvature:
   threshold_m: 400               # iRAP category 2/3 boundary: sharp and very sharp
-                                 # are critical. JKR 2A/85 2.3.1 signs a curve only
+                                 # are critical. JKR ATJ 2B/85 2.3.1 signs a curve only
                                  # when its recommended speed is at or below the
                                  # limit; iRAP's moderate (400-800 m) is driven at
                                  # 70-100 km/h, above these rural roads' limits.
